@@ -164,7 +164,7 @@ export function createApp() {
   );
   app.get("/api/health", (c) => c.json({ status: "ok" }));
   app.get("/api/config", (c) =>
-    c.json({ ...(rt(c).selfDemo ? { selfDemo: true } : {}), ...(rt(c).harnessReadOnly ? { harnessReadOnly: true } : {}), google: rt(c).googleEnabled, mail: rt(c).mailMode ? rt(c).mailMode !== "unconfigured" : rt(c).local, mailMode: rt(c).mailMode || (rt(c).local ? "local" : "unconfigured") }),
+    c.json({ ...(rt(c).showcase ? {showcase:true} : {}), ...(rt(c).selfDemo ? { selfDemo: true } : {}), ...(rt(c).harnessReadOnly ? { harnessReadOnly: true } : {}), google: rt(c).googleEnabled, mail: rt(c).mailMode ? rt(c).mailMode !== "unconfigured" : rt(c).local, mailMode: rt(c).mailMode || (rt(c).local ? "local" : "unconfigured") }),
   );
   // OTPはメール所有者だけが受け取る。検証用コードの無認証公開は行わない。
   app.get("/api/staging-otp", c => c.json({error:"NOT_FOUND",message:"Not found"},404));
@@ -235,9 +235,10 @@ export function createApp() {
       mfa: p.mfa,
       mfaEnrolled: Boolean(factor?.confirmed),
       invitations: invites.map((i) => ({ ...i, roles: parse(i.roles, []) })),
+      showcase: !!rt(c).showcase,
       selfDemo: !!rt(c).selfDemo,
       demoOnly: await isDemoGuest(rt(c),p.user.id),
-      home: await isDemoGuest(rt(c),p.user.id) ? "/demo" : route,
+      home: rt(c).showcase ? "/tour" : await isDemoGuest(rt(c),p.user.id) ? "/demo" : route,
     });
   });
   app.post("/api/session/tenant", async (c) => {

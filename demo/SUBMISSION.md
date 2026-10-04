@@ -22,3 +22,11 @@ Googleアカウントと個人LINEがあれば、運営の同席なしで試せ�
 技術：React / Hono / TypeScript / Cloudflare Workers・D1 / Google OAuth・Drive・Sheets / LINE Messaging API / TimeRex Webhook / OpenAI。文案生成は根拠を検証し、送信時にも顧客・在庫・会話の更新を確認します。
 
 ソースコード： https://github.com/Shimochaan/tsunagu-gs-demo
+
+## 管理・営業・運営の全画面見学
+
+**[demo@example.com でログイン](https://tsunagu-gs-showcase.shimoryo.workers.dev/login)** — パスワード・確認コードは不要です。公開の架空データを使った見学用アカウントです。
+
+ログイン後の「画面一覧・導入フロー」から、今日の提案・顧客・面談結果・接続設定・導入設定・運営管理など、全19画面へ移れます。各画面に役割と通常の操作を表示します。保存・送信・外部接続は停止しています。自分のLINEへの実送信には、Googleログインの体験画面を使ってください。
+
+[全画面の役割・企業への導入フロー](SCREENS-AND-ONBOARDING.md)

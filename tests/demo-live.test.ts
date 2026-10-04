@@ -636,3 +636,20 @@ test('meeting LINE webhook durably queues before acknowledgement and never waits
    assert.equal(f.calls.filter(c=>c.url.endsWith('/reply')).length,1);
  } finally {await f.dispose();}
 });
+
+
+test('AI budget: only existing operators get the configured expansion; guests and the total cap remain bounded', async()=>{
+ const f=await fixture();try {
+   const {claimDemoAI,demoAILimits}=await import('../backend/self-demo-access.ts');
+   f.rt.selfDemo!.operatorAILimit=100; f.rt.selfDemo!.totalAILimit=300;
+   assert.equal((await demoAILimits(f.rt,'owner')).personal,100);
+   for(let i=0;i<13;i++)assert.equal(await claimDemoAI(f.rt,'owner'),true);
+   await f.rt.db.query("UPDATE gs_demo_participants SET guest_only=1 WHERE user_id='owner'");
+   assert.equal((await demoAILimits(f.rt,'owner')).personal,12);
+   assert.equal(await claimDemoAI(f.rt,'owner'),false);
+   await f.rt.db.query("UPDATE gs_demo_participants SET guest_only=0 WHERE user_id='owner'");
+   f.rt.selfDemo!.totalAILimit=14;
+   const concurrent=await Promise.all([claimDemoAI(f.rt,'owner'),claimDemoAI(f.rt,'owner')]);
+   assert.equal(concurrent.filter(Boolean).length,1);
+ }finally{await f.dispose();}
+});

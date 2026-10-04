@@ -9,7 +9,8 @@ export interface Mail {
 import type { StaffPushAdapter } from "./proposal-events.ts";
 import type { CustomerTestDelivery } from "./customer-test-delivery.ts";
 export interface Runtime {
-  selfDemo?: { tenant: string; oa: string; capacity: number; timerexUrl?: string };
+  showcase?: boolean;
+  selfDemo?: { tenant: string; oa: string; capacity: number; operatorAILimit?: number; totalAILimit?: number; timerexUrl?: string };
   assistantSimulation?: boolean;
   assistantManualOnly?: boolean;
   provisioningEnabled?: boolean;

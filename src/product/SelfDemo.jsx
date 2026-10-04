@@ -542,6 +542,7 @@ export function SelfDemo({ me }) {
         <a href="/demo" className="demo-tag">
           G’s 提出用・実機体験
         </a>
+        <a className="demo-link" href="https://tsunagu-gs-showcase.shimoryo.workers.dev/login" target="_blank" rel="noreferrer">全画面見学・導入フロー ↗</a>
         <button
           className="demo-link"
           onClick={() =>

@@ -1,0 +1,45 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tsunagu-gs-showcase",
+  "main": "backend/showcase-worker.ts",
+  "compatibility_date": "2026-10-04",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./build/public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "APP_ORIGIN": "https://YOUR_SHOWCASE_ORIGIN.invalid"
+  },
+  "d1_databases": [
+    {
+      "binding": "PLATFORM_DB",
+      "database_name": "tsunagu-gs-showcase-platform",
+      "database_id": "CREATE_NEW_ISOLATED_PLATFORM_DB"
+    },
+    {
+      "binding": "SHOWCASE_COMMON_DB",
+      "database_name": "tsunagu-gs-showcase-common",
+      "database_id": "CREATE_NEW_ISOLATED_SHOWCASE_COMMON_DB"
+    },
+    {
+      "binding": "SHOWCASE_HARNESS_DB",
+      "database_name": "tsunagu-gs-showcase-harness",
+      "database_id": "CREATE_NEW_ISOLATED_SHOWCASE_HARNESS_DB"
+    },
+    {
+      "binding": "SHOWCASE_STUDIO_DB",
+      "database_name": "tsunagu-gs-showcase-studio",
+      "database_id": "CREATE_NEW_ISOLATED_SHOWCASE_STUDIO_DB"
+    }
+  ]
+}

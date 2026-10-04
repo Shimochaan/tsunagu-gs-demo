@@ -70,13 +70,20 @@ export async function isDemoGuest(rt: Runtime, actor: string) {
   return !member || parse(member.roles, []).includes("demo");
 }
 
+export async function demoAILimits(rt: Runtime, actor: string) {
+  const p=await demoParticipant(rt,actor);
+  const m=p && !p.guest_only ? await one(rt.db,"SELECT roles FROM memberships WHERE tenant_id=? AND user_id=? AND state='active'",[p.tenant_id,actor]) : null;
+  const operator=m && parse(m.roles,[]).some((r:string)=>['org_owner','sys_admin'].includes(r));
+  return {personal:operator ? rt.selfDemo?.operatorAILimit || 12 : 12,total:rt.selfDemo?.totalAILimit || 120};
+}
 export async function claimDemoAI(rt: Runtime, actor: string) {
   const p = await demoParticipant(rt, actor);
   if (!p || p.state !== "active") return false;
+  const limits=await demoAILimits(rt,actor);
   const day = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
   const claim = await rt.db.query(
-    "INSERT INTO gs_demo_actions(id,user_id,kind,day,created_at) SELECT ?,?,'ai',?,? WHERE (SELECT COUNT(*) FROM gs_demo_actions WHERE user_id=? AND kind='ai' AND day=?)<12 AND (SELECT COUNT(*) FROM gs_demo_actions WHERE kind='ai' AND day=?)<120",
-    [crypto.randomUUID(), actor, day, now(), actor, day, day],
+    "INSERT INTO gs_demo_actions(id,user_id,kind,day,created_at) SELECT ?,?,'ai',?,? WHERE (SELECT COUNT(*) FROM gs_demo_actions WHERE user_id=? AND kind='ai' AND day=?)<? AND (SELECT COUNT(*) FROM gs_demo_actions WHERE kind='ai' AND day=?)<?",
+    [crypto.randomUUID(), actor, day, now(), actor, day, limits.personal, day, limits.total],
   );
   return !!claim.changes;
 }

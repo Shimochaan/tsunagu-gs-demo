@@ -1,3 +1,4 @@
+import { demoAILimits } from "./self-demo-access.ts";
 import { queueDemoSheetWrite, processDemoSheetWrites } from "./demo-sheet-sync.ts";
 import { googleDB, googleConfig } from "./assistant-google-store.ts";
 import { runValueLoop } from "./assistant-value-loop.ts";
@@ -464,6 +465,7 @@ export async function demoSnapshot(rt: Runtime, actor: string) {
   ]);
   const g=await googleConfig(await googleDB(rt,tenant,oa));
   const sheetWrites=await all(ts,"SELECT source_id,state,error,updated_at,json_extract(row_json,'$[1]') title FROM demo_sheet_writes WHERE user_id=? ORDER BY updated_at DESC LIMIT 10",[actor]);
+  const aiLimits=await demoAILimits(rt,actor);
   const live=await one(rt.db,"SELECT last_sync_at,error FROM gs_demo_live_state WHERE id=?",[tenant+':'+oa]);
   return {
     sheetWrites,live,
@@ -488,7 +490,8 @@ export async function demoSnapshot(rt: Runtime, actor: string) {
     bookings,
     bookingUrl: await demoBookingUrl(rt, p.customer_id),
     bookingConfigured: await demoBookingConfigured(rt),
-    aiRemaining: Math.max(0, 12 - usage!.n),
+    aiLimit: aiLimits.personal,
+    aiRemaining: Math.max(0, aiLimits.personal - usage!.n),
     feedback,
     messages,
   };

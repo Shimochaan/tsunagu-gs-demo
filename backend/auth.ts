@@ -1,5 +1,7 @@
 import { betterAuth, type BetterAuthOptions } from "better-auth";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthEndpoint } from "better-auth/api";
+import { setSessionCookie } from "better-auth/cookies";
+import { z } from "zod";
 import { emailOTP, magicLink } from "better-auth/plugins";
 import { one, now, type Database } from "./db.ts";
 import type { Mail } from "./runtime.ts";
@@ -9,6 +11,7 @@ export function authOptions(options: {
   origin: string;
   secret: string;
   publicGoogleSignup?: boolean;
+  publicShowcase?: boolean;
   googleId?: string;
   googleSecret?: string;
   sendMail: (m: Mail) => Promise<void>;
@@ -34,7 +37,7 @@ export function authOptions(options: {
     emailAndPassword: { enabled: false },
     // 所属・権限をCookieへコピーしない。権限失効は次のAPIリクエストで反映する。
     session: {
-      expiresIn: 60 * 60 * 24 * 90,
+      expiresIn: options.publicShowcase ? 60 * 60 * 2 : 60 * 60 * 24 * 90,
       // 利用のたびに延長せず、ログインから90日後に再認証する。
       disableSessionRefresh: true,
       cookieCache: { enabled: false },
@@ -70,6 +73,28 @@ export function authOptions(options: {
       },
     },
     plugins: [
+      ...(options.publicShowcase ? [{
+        id: "public-showcase",
+        endpoints: {
+          signInDemo: createAuthEndpoint("/sign-in/demo", {
+            method: "POST", requireHeaders: true,
+            body: z.object({ email: z.literal("demo@example.com") }),
+          }, async (ctx) => {
+            if (ctx.headers.get("origin") !== options.origin)
+              throw new APIError("FORBIDDEN", { message: "見学画面からログインしてください。" });
+            const found = await ctx.context.internalAdapter.findUserByEmail("demo@example.com");
+            if (!found || found.user.id !== "showcase-viewer" || !found.user.emailVerified)
+              throw new APIError("FORBIDDEN", { message: "見学用データの準備が必要です。" });
+            const session = await ctx.context.internalAdapter.createSession(found.user.id);
+            if (!session) throw new APIError("INTERNAL_SERVER_ERROR");
+            // This account exists only in the physically isolated public showcase.
+            // Production MFA and invitation rules are never bypassed.
+            await options.db.query("INSERT INTO session_context(session_id,tenant_id,mfa_at) VALUES (?,?,?)", [session.id,"showcase-company",now()]);
+            await setSessionCookie(ctx, {session, user: found.user});
+            return ctx.json({ok:true});
+          }),
+        },
+      }] : []),
       emailOTP({
         storeOTP: "hashed",
         expiresIn: 300,

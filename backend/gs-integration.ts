@@ -7,6 +7,8 @@ import { customerTestDelivery } from "./customer-test-delivery.ts";
 export interface IntegrationScope {
   selfDemo?: boolean;
   demoCapacity?: number;
+  demoOperatorAILimit?: number;
+  demoTotalAILimit?: number;
   demoTimeRexUrl?: string;
   demoTimeRexSecret?: string;
   tenant: string;
@@ -136,6 +138,8 @@ export function isolatedIntegrationRuntime(
           tenant: scope.tenant,
           oa: scope.oa,
           capacity: scope.demoCapacity || 10,
+          operatorAILimit: scope.demoOperatorAILimit,
+          totalAILimit: scope.demoTotalAILimit,
           timerexUrl: scope.demoTimeRexUrl,
         }
       : undefined,

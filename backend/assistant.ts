@@ -1232,6 +1232,7 @@ export function registerAssistant(app: Hono<AppEnv>) {
         problem: await assistantGuard(rt, t, oa, p),
       },
       learning: await all(ts,"SELECT id,version,action,origin,category,note,excluded,at FROM assistant_feedback WHERE proposal_id=? AND actor_id=? ORDER BY at DESC LIMIT 20",[p.id,actor]),
+      showcase: !!rt.showcase,
       aiConfigured: !!rt.ai?.apiKey,
       deliveryEnabled: !!rt.deliveryEnabled,
     });

@@ -1,6 +1,7 @@
 import React, { useState, useRef } from "react";
 import { B, I, Brand, Avatar, Tag, Note, Empty } from "../platform/ui.jsx";
 import { api, label } from "./api.js";
+import { ShowcaseBanner } from "./Showcase.jsx";
 export function State({ error, children }) {
   return error ? (
     <Note tone="rose" icon="AlertCircle">
@@ -173,6 +174,7 @@ export function Shell({ me, path, go, children, refreshMe }) {
           </div>
         </div>
         <nav aria-label="メインナビゲーション">
+          {me.showcase && <button className={path==="/tour"?"active":""} onClick={()=>go("/tour")}><I name="Map"/><span>画面一覧・導入フロー</span></button>}
           {menus.map(([href, icon, text]) => (
             <button
               key={href}
@@ -239,7 +241,7 @@ export function Shell({ me, path, go, children, refreshMe }) {
           </div>
           <Tag>{ops ? "OPERATIONS" : "WORKSPACE"}</Tag>
         </header>
-        <main className="pt-ops-main">{children}</main>
+        <main className="pt-ops-main">{me.showcase && <ShowcaseBanner path={path} go={go}/>} {children}</main>
       </div>
     </div>
   );

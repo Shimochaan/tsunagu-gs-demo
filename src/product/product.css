@@ -1067,3 +1067,9 @@ select:focus-visible {
 .setup-environment summary { cursor: pointer; font-weight: 600; }
 .setup-route-link { padding: 12px 16px; background: #f2edf8; border-radius: 12px; color: #66527d; }
 @media (max-width: 600px) { .setup-readiness-list .product-row, .setup-environment .product-row { align-items: flex-start; flex-direction: column; } }
+/* Public product tour: real product screens with isolated sample data. */
+.showcase-banner{padding:20px 24px;margin:0 0 28px;border:1px solid #ddd2e9;border-radius:16px;background:#faf7ff;color:#493b59}
+.showcase-banner>div:first-child{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.showcase-banner p{line-height:1.8;margin:12px 0}.showcase-banner small{color:#796c87}.showcase-links{display:flex;gap:20px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.showcase-entry-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:24px 0 36px}.showcase-entry{padding:26px;text-align:left;background:#fff;border:1px solid #e4ddeb;border-radius:16px;color:#4d3c60;cursor:pointer;font:inherit}.showcase-entry:hover{background:#f6effe;border-color:#9b81b6}.showcase-entry strong,.showcase-entry span{display:block}.showcase-entry span{font-size:13px;line-height:1.8;margin-top:12px;color:#81748d}
+.showcase-flow{list-style:none;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:18px}.showcase-flow li{padding:22px;border-radius:12px;background:#f8f6fb}.showcase-flow h3{margin:12px 0;font-size:17px}.showcase-flow p,.showcase-screen-list p{line-height:1.8}.showcase-screen-list{display:grid;grid-template-columns:1fr 1fr;gap:24px}.showcase-screen-list article{border-bottom:1px solid #ede7f3;padding-bottom:20px}.showcase-screen-list small{line-height:1.8;color:#7a6e85;display:block}
+@media(max-width:760px){.showcase-entry-grid,.showcase-flow,.showcase-screen-list{grid-template-columns:1fr}.showcase-banner{padding:16px}}

@@ -13,6 +13,8 @@ export interface IntegrationEnv extends Env {
   GS_DEMO_TIMEREX_URL?: string;
   GS_DEMO_TIMEREX_SECRET?: string;
   GS_SELF_DEMO_CAPACITY?: string;
+  GS_DEMO_OPERATOR_AI_LIMIT?: string;
+  GS_DEMO_TOTAL_AI_LIMIT?: string;
   GS_RUNTIME_ENABLED?: string;
   GS_AUTOMATION_ENABLED?: string;
   GS_ALLOW_RESEARCH?: string;
@@ -60,6 +62,8 @@ function integrationRuntime(env:IntegrationEnv) {
       selfDemo: env.GS_SELF_DEMO_ENABLED === "true",
       demoTimeRexUrl: env.GS_DEMO_TIMEREX_URL,
       demoTimeRexSecret: env.GS_DEMO_TIMEREX_SECRET,
+      demoOperatorAILimit: Math.max(12,Math.min(1000,Number(env.GS_DEMO_OPERATOR_AI_LIMIT)||12)),
+      demoTotalAILimit: Math.max(120,Math.min(5000,Number(env.GS_DEMO_TOTAL_AI_LIMIT)||120)),
       demoCapacity: Math.max(1,Math.min(100,Number(env.GS_SELF_DEMO_CAPACITY)||10)),
       tenant: env.GS_TENANT_ID,
       oa: env.GS_OA_ID,

@@ -9,6 +9,7 @@ import { api, label } from "./api.js";
 import { Action, Shell, State, Blank } from "./shared.jsx";
 import { Login, Security } from "./Auth.jsx";
 import { Ops } from "./Ops.jsx";
+import { ShowcaseGuide,ShowcaseBanner } from "./Showcase.jsx";
 import { Onboarding, Profiles } from "./Onboarding.jsx";
 import { Sales } from "./Sales.jsx";
 function getInitialMe() {
@@ -140,7 +141,7 @@ function Product() {
   if (me === undefined) return <State />;
   if (me === null) return <Login reload={enter} config={config} />;
   if (me.selfDemo && (path === "/demo" || me.demoOnly)) return <SelfDemo me={me}/>;
-  if (path === "/security") return <Security me={me} reload={enter} />;
+  if (path === "/security") return <>{me.showcase && <ShowcaseBanner path={path} go={go}/>}<Security me={me} reload={enter} /></>;
   if (
     path === "/invitations" ||
     path === "/companies" ||
@@ -148,6 +149,7 @@ function Product() {
   )
     return (
       <div className="product-centered">
+        {me.showcase && <ShowcaseBanner path={path} go={go}/>}
         <Brand />
         <Title
           eyebrow="WORKSPACE"
@@ -226,7 +228,7 @@ function Product() {
     );
   return (
     <Shell me={me} path={path} go={go} refreshMe={reload}>
-      {path.startsWith("/ops") ? (
+      {path === "/tour" && me.showcase ? <ShowcaseGuide go={go}/> : path.startsWith("/ops") ? (
         <Ops key={path} me={me} path={path} go={go} />
       ) : path === "/onboarding" ? (
         <Onboarding key={me.activeTenant} tenant={me.activeTenant} me={me} reloadMe={reload} />

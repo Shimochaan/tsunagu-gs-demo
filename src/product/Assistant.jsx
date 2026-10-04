@@ -628,7 +628,7 @@ export function AssistantProposal({ p, base, customer, done, updated }) {
     return <Note>この提案は表示できません。最新状態を確認してください。</Note>;
   const evidence = current.evidence || {},
     mutable = ["pending", "approved", "held"].includes(current.state),
-    valid = !current.problem;
+    valid = data.showcase || !current.problem;
   const makeDraft = async (instruction = "") => {
     if (generationLock.current) return;
     generationLock.current = true;
@@ -656,7 +656,7 @@ export function AssistantProposal({ p, base, customer, done, updated }) {
         送信元：{p.oa_name} · 有効期限：{date(current.expires_at)}
       </p>
       <Note>{current.reason}</Note>
-      {data.deliveryEnabled === false && <Note tone="amber">送信は停止中です。承認内容を保存できますが、現在は顧客へ配信しません。</Note>}
+      {data.showcase ? <Note>画面見学用の文案です。「修正する」で編集項目を確認できます。保存・生成・承認・送信は停止しています。</Note> : data.deliveryEnabled === false && <Note tone="amber">送信は停止中です。承認内容を保存できますが、現在は顧客へ配信しません。</Note>}
       {generating && (
         <p role="status">
           会話と根拠を確認して文案を作成中です。完了後の文案を確認してください。
@@ -666,7 +666,7 @@ export function AssistantProposal({ p, base, customer, done, updated }) {
         {evidence.draftDetail ||
           "参考テンプレートです。内容を確認・編集してください。"}
       </Note>
-      {current.problem && (
+      {current.problem && !data.showcase && (
         <Note tone="amber">
           {current.problem} 見送ってから新しい提案を確認してください。
         </Note>
@@ -764,7 +764,7 @@ export function AssistantProposal({ p, base, customer, done, updated }) {
         </Form>
       </details>}
       {!!data.learning?.length && <details><summary>この提案からの学習履歴</summary>{data.learning.filter(e=>e.origin!=="ai").map(e=><div key={e.id}><p>{e.action==="approved"?"承認":e.action==="edited"?"編集":e.action==="cancel"?"見送り":"あとで"}・版{e.version}・{{style:"文体",fact:"事実の再確認",customer:"このお客様の事情",unclassified:"分類保留",approval:"承認を記録",timing:"時機",not_fit:"条件不一致",incorrect:"事実の再確認",tone:"文体",duplicate:"案内済み",unspecified:"理由なし"}[e.category]||e.category} {e.excluded?"（学習対象外）":""}</p>{e.note&&<p>{e.note}</p>}<Action run={()=>api(`${base}/assistant/learning/${encodeURIComponent(e.id)}`,{excluded:!e.excluded},"PATCH")} done={refresh}>{e.excluded?"学習対象に戻す":"学習から除外"}</Action></div>)}</details>}
-      {mutable && valid && data.aiConfigured && (
+      {mutable && valid && (data.aiConfigured || data.showcase) && (
         <details>
           <summary>言葉で文案の修正を依頼</summary>
           <Form
