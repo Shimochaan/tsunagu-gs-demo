@@ -969,3 +969,41 @@ test("self demo: simultaneous property edits reject the stale writer without los
     assert.equal(await one(f.ts,"SELECT id FROM assistant_sources WHERE id=?",[sourceId]),null,"do not recreate a source removed after reading it");
   } finally {await f.dispose();}
 });
+
+test("self demo: failed extraction is retained for free revalidation and invalidated on document edit", async () => {
+  const f=await fixture();
+  try {
+    await f.pair();
+    f.rt.ai = { apiKey: "fixture", model: "fixture" };
+    const base=f.rt.externalFetch;
+    let extractions=0;
+    f.rt.externalFetch=async(input,init)=>{
+      const body=init?.body ? JSON.parse(String(init.body)) : null;
+      if(body?.text?.format?.name==='meeting_extract') {
+        extractions++;
+        const transcript=JSON.parse(body.input).transcript;
+        return Response.json({status:'completed',usage:{input_tokens:1,output_tokens:1},output:[{type:'message',content:[{type:'output_text',text:json({summary:'希望条件を確認しました。',dealState:'uncontracted',stage:'post_meeting',keyPoints:[],concerns:[],interests:[],nextAction:'条件に合う物件を確認する',triggers:[],tracking:{conditionQuote:transcript,terms:['新宿区'],timings:[],propertyWish:{area:'新宿区',maxPrice:58000000,required:['3LDK','所有権'],excluded:[],quote:transcript}}})}]}]});
+      }
+      return base(input,init);
+    };
+    const body='新宿区、3LDK、所有権、物件価格5,500万円以内を希望します。';
+    const added=await f.request('/api/demo/documents',{title:'根拠の確認テスト',body,heldAt:now()});
+    const path=`/api/demo/documents/${added.data.id}`;
+    await f.request(path+'/link',{version:1});
+    let doc=await one(f.rt.db,'SELECT * FROM gs_demo_documents WHERE id=?',[added.data.id]);
+    assert.equal(doc.state,'error');
+    assert.match(doc.error,/上限予算/);
+    assert.equal(parse(doc.analysis).extractVersion,1);
+    assert.equal(parse(doc.analysis).extraction.tracking.propertyWish.maxPrice,58000000);
+    await f.request(path+'/link',{version:1});
+    assert.equal(extractions,1,'validation retry reuses the exact extraction');
+    assert.equal((await one(f.rt.db,"SELECT COUNT(*) AS n FROM gs_demo_actions WHERE kind='ai' AND user_id='guest'")).n,1);
+    await f.request(path+'/link',{version:1,reextract:true});
+    assert.equal(extractions,2,'the user can explicitly request fresh AI output without editing the source');
+    await f.request(path,{title:'根拠の確認テスト',body:body.replace('5,500','5,800'),heldAt:doc.held_at,version:1},'guest','PUT');
+    doc=await one(f.rt.db,'SELECT * FROM gs_demo_documents WHERE id=?',[added.data.id]);
+    assert.equal(extractions,3,'changed text requires fresh extraction');
+    assert.equal(doc.version,2);
+    assert.equal(doc.state,'ready',doc.error);
+  } finally {await f.dispose();}
+});

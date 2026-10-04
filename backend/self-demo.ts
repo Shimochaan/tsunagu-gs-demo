@@ -287,7 +287,9 @@ export async function processDemoDocument(
   const ts = await rt.openDatabase(tenant, oa, "tsunagu"),
     common = await rt.openDatabase(tenant, "", "common");
   try {
-    requireThat(
+    const cached = parse(doc.analysis, null);
+    const reusable = cached?.extractVersion === doc.version && cached.extraction?.tracking && cached.extraction;
+    if (!reusable) requireThat(
       await claimDemoAI(rt, actor),
       429,
       "DEMO_AI_LIMIT",
@@ -298,13 +300,19 @@ export async function processDemoDocument(
       "SELECT name FROM customers WHERE id=?",
       [p.customer_id],
     );
-    const result = await extractMeetingInsights(rt, tenant, oa, actor, {
+    const result = reusable || await extractMeetingInsights(rt, tenant, oa, actor, {
       customerName: customer!.name,
       title: doc.title,
       heldAt: doc.held_at,
       transcript: doc.body,
       automated: true,
     });
+    // Retain the exact output for validation repair without another paid AI call.
+    const retained = await rt.db.query(
+      "UPDATE gs_demo_documents SET analysis=? WHERE id=? AND version=? AND state='processing' AND lease_until=?",
+      [json({ extraction: result, extractVersion: doc.version }), docId, doc.version, lease],
+    );
+    requireThat(retained.changes, 409, "DOCUMENT_CHANGED", "最新版の議事録を解析中です。");
     const tracking = checkedMeetingTracking(result.tracking, doc.body);
     const current = await one(
       rt.db,
@@ -650,12 +658,12 @@ export function registerSelfDemo(app: Hono<AppEnv>) {
     const { rt, actor } = ctx(c);
     await participant(rt, actor, true);
     const b = z
-      .object({ version: z.number().int().positive() })
+      .object({ version: z.number().int().positive(), reextract: z.boolean().default(false) })
       .strict()
       .parse(await c.req.json());
     const r = await rt.db.query(
-      "UPDATE gs_demo_documents SET state='queued',error=NULL WHERE id=? AND user_id=? AND version=? AND state IN ('unlinked','error')",
-      [c.req.param("id"), actor, b.version],
+      "UPDATE gs_demo_documents SET state='queued',error=NULL,analysis=CASE WHEN ? THEN NULL ELSE analysis END WHERE id=? AND user_id=? AND version=? AND state IN ('unlinked','error')",
+      [Number(b.reextract), c.req.param("id"), actor, b.version],
     );
     requireThat(
       r.changes,

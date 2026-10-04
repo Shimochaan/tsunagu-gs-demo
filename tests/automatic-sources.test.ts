@@ -767,3 +767,17 @@ test("mounted screen invalidation broadcasts only matching tenant URLs and unsub
   assert.equal(a, 1);
   offB();
 });
+
+test("P02 meeting grounds walking conditions across two separately verified excerpts", () => {
+  const conditionQuote="確定条件は「新宿区」「3LDK」「物件価格6,500万円以内」「定期借地権除外」「駅徒歩15分以内（10分以内優先）」です。";
+  const quote="対象エリアは新宿区のみ。3LDKが必須条件。物件価格は6,500万円以内が上限。定期借地権は除外し、所有権物件に限定。駅からの距離は、理想は「10分以内」、許容範囲は「15分以内まで検討可能」、16分以上は除外。";
+  const transcript=conditionQuote+"\n途中の会話\n"+quote;
+  const tracking={conditionQuote,terms:["新宿区","駅徒歩15分以内"],timings:[],propertyWish:{area:"新宿区",maxPrice:65000000,required:["3LDK","所有権","駅徒歩15分以内"],excluded:["定期借地権"],quote}};
+  assert.equal(checkedMeetingTracking(tracking,transcript).propertyWish.maxPrice,65000000);
+  assert.throws(()=>checkedMeetingTracking({...tracking,propertyWish:{...tracking.propertyWish,required:["駅徒歩16分以内"]}},transcript),(e:any)=>e.code==='MEETING_WISH' && e.message.includes('駅徒歩16分以内'));
+  assert.throws(()=>checkedMeetingTracking({...tracking,conditionQuote:conditionQuote.replace("15分","16分"),terms:[]},transcript),(e:any)=>e.code==='MEETING_EVIDENCE');
+  assert.throws(()=>checkedMeetingTracking({...tracking,propertyWish:{...tracking.propertyWish,maxPrice:70000000}},transcript),(e:any)=>e.code==='MEETING_WISH' && e.message.includes('上限予算'));
+  // A requested tag elsewhere in the transcript is insufficient unless an exact
+  // supporting excerpt was selected; this does not search the whole transcript.
+  assert.throws(()=>checkedMeetingTracking({...tracking,conditionQuote:"途中の会話",terms:[]},transcript),(e:any)=>e.code==='MEETING_WISH');
+});

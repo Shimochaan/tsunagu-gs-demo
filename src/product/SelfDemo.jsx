@@ -188,7 +188,7 @@ function DocumentCard({ d, run, reload }) {
           {d.error}
         </p>
       )}
-      {d.analysis && (
+      {d.analysis?.summary && (
         <>
           <p>{d.analysis.summary}</p>
           {d.analysis.applied === false && <p className="demo-muted">{d.analysis.reason}</p>}
@@ -218,9 +218,15 @@ function DocumentCard({ d, run, reload }) {
               }
             >
               {d.state === "error"
-                ? "解析をやり直す"
+                ? (d.analysis?.extraction ? "原文との対応を再確認する" : "解析をやり直す")
                 : "自分のお客様に紐付けて解析する"}
             </button>
+          )}
+          {d.state === "error" && d.analysis?.extraction && (
+            <button className="demo-button secondary" onClick={() => run(async () => {
+              await api(`/api/demo/documents/${d.id}/link`, {version:d.version,reextract:true});
+              await reload();
+            }, "AIで改めて解析しています。利用枠を1回使用します。")}>AIで解析し直す（1回分）</button>
           )}
           <button
             className="demo-button secondary"

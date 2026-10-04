@@ -126,16 +126,21 @@ export function checkedMeetingTracking(tracking: any, transcript: string) {
   );
   const w = tracking.propertyWish;
   if (w) {
+    // The two independently verified excerpts may carry different parts of the
+    // same conditions. Do not reject a tag explicitly grounded in conditionQuote
+    // merely because propertyWish.quote uses a different station-distance heading.
+    const missing = [
+      ...(!normalize(w.quote) || !normalize(transcript).includes(normalize(w.quote)) ? ["引用文"] : []),
+      ...(w.area !== null && !normalize(w.quote).includes(normalize(w.area)) ? ["希望エリア"] : []),
+      ...(w.maxPrice !== null && !numbers(w.quote).includes(w.maxPrice) ? ["上限予算"] : []),
+      ...[...w.required, ...w.excluded].filter((t: string) =>
+        !quotedTag(w.quote, t) && !quotedTag(tracking.conditionQuote, t)),
+    ];
     requireThat(
-      normalize(transcript).includes(normalize(w.quote)) &&
-        (w.area === null || normalize(w.quote).includes(normalize(w.area))) &&
-        (w.maxPrice === null || numbers(w.quote).includes(w.maxPrice)) &&
-        [...w.required, ...w.excluded].every((t: string) =>
-          quotedTag(w.quote, t),
-        ),
+      missing.length === 0,
       422,
       "MEETING_WISH",
-      "希望条件の数値・語句の根拠を確認できません。",
+      `希望条件の根拠を確認できません（${missing.join("・")}）。原文との対応を再確認してください。`,
     );
   }
   return tracking;
