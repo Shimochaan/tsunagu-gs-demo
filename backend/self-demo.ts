@@ -734,7 +734,7 @@ export function registerSelfDemo(app: Hono<AppEnv>) {
         layout: b.layout,
         tenure: "所有権",
       },
-    });
+    }, false, b.sourceId ? { version: b.version!, audienceCustomerId: p.customer_id } : undefined);
     await scanAssistant(rt, tenant, oa, actor, undefined, [p.customer_id], {
       generateDraft: true,
     });

@@ -925,3 +925,47 @@ test("self demo: inherited wishes keep evidence and do not reuse changed or dele
     assert.equal(pref.note_id,"second-v1");
   } finally { await f.dispose(); }
 });
+
+test("self demo: simultaneous property edits reject the stale writer without losing the winner", async () => {
+  const f=await fixture();
+  try {
+    await f.pair();
+    const property={title:"渋谷の体験物件",area:"渋谷区",price:48000000,layout:"2LDK",walkingMinutes:5,status:"available"};
+    const created=await f.request("/api/demo/properties",property);
+    assert.equal(created.status,200);
+    const sourceId=created.data.id;
+    const query=f.ts.query.bind(f.ts);
+    let readers=0, release!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;});
+    f.ts.query=async(sql,params)=>{
+      const result=await query(sql,params);
+      if(sql==="SELECT data,version FROM assistant_sources WHERE id=?" && readers<2) {
+        readers++;
+        if(readers===2) release();
+        await gate;
+      }
+      return result;
+    };
+    const edits=[{...property,status:"sold",sourceId,version:1},{...property,price:49000000,sourceId,version:1}];
+    const responses=await Promise.all(edits.map(edit=>f.request("/api/demo/properties",edit)));
+    assert.deepEqual(responses.map(r=>r.status).sort(),[200,409]);
+    const winner=edits[responses.findIndex(r=>r.status===200)];
+    const stored=await one(f.ts,"SELECT * FROM assistant_sources WHERE id=?",[sourceId]);
+    assert.equal(stored.version,2);
+    assert.equal(parse(stored.data).status,winner.status);
+    assert.equal(parse(stored.data).price,winner.price);
+    assert.equal((await f.request("/api/demo/properties",edits[0])).status,409);
+    assert.equal((await one(f.ts,"SELECT version FROM assistant_sources WHERE id=?",[sourceId])).version,2);
+    let removed=false;
+    f.ts.query=async(sql,params)=>{
+      const result=await query(sql,params);
+      if(!removed && sql==="SELECT data,version FROM assistant_sources WHERE id=?") {
+        removed=true;
+        await query("DELETE FROM assistant_sources WHERE id=?",[sourceId]);
+      }
+      return result;
+    };
+    assert.equal((await f.request("/api/demo/properties",{...property,sourceId,version:2,price:50000000})).status,409);
+    assert.equal(await one(f.ts,"SELECT id FROM assistant_sources WHERE id=?",[sourceId]),null,"do not recreate a source removed after reading it");
+  } finally {await f.dispose();}
+});

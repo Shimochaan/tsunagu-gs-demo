@@ -368,6 +368,7 @@ export async function upsertSource(
   oa: string,
   input: unknown,
   monotonic = false,
+  expected?: { version: number; audienceCustomerId: string },
 ) {
   const s = sourceSchema.parse(input);
   requireThat(!sourceContradiction(s),422,"SOURCE_CONTRADICTION",sourceContradiction(s)||"");
@@ -383,8 +384,14 @@ export async function upsertSource(
   );
   const ts = await rt.openDatabase(tenant, oa, "tsunagu"),
     data = json(s);
-  await ts.query(
-    "INSERT INTO assistant_sources(id,kind,title,url,published_at,event_at,checked_at,expires_at,data,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,title=excluded.title,url=excluded.url,published_at=excluded.published_at,event_at=excluded.event_at,checked_at=excluded.checked_at,expires_at=excluded.expires_at,data=excluded.data,version=version+1,updated_at=excluded.updated_at WHERE data<>excluded.data" +
+  // Check a caller's version and ownership in the write itself, including when
+  // the source was removed after the earlier read. A stale edit cannot recreate it.
+  const saved = await ts.query(
+    "INSERT INTO assistant_sources(id,kind,title,url,published_at,event_at,checked_at,expires_at,data,updated_at) " +
+      (expected
+        ? "SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM assistant_sources WHERE id=? AND version=? AND json_extract(data,'$.audienceCustomerId')=?)"
+        : "VALUES (?,?,?,?,?,?,?,?,?,?)") +
+      " ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,title=excluded.title,url=excluded.url,published_at=excluded.published_at,event_at=excluded.event_at,checked_at=excluded.checked_at,expires_at=excluded.expires_at,data=excluded.data,version=version+1,updated_at=excluded.updated_at WHERE data<>excluded.data" +
       (monotonic ? " AND checked_at<excluded.checked_at" : ""),
     [
       s.id,
@@ -397,8 +404,10 @@ export async function upsertSource(
       s.expiresAt,
       data,
       now(),
+      ...(expected ? [s.id, expected.version, expected.audienceCustomerId] : []),
     ],
   );
+  if (expected) requireThat(saved.changes, 409, "SOURCE_CHANGED", "物件が更新されています。最新の内容を確認してください。");
 }
 export async function scanAssistant(
   rt: Runtime,
