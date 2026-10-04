@@ -15,6 +15,7 @@ import { refreshAssistantSources } from "./assistant-discovery.ts";
 import { notifyAssistant } from "./assistant-notifications.ts";
 import { recordRun } from "./assistant-controls.ts";
 import { one } from "./db.ts";
+import { processAssistantDraftRepairs } from "./assistant-draft.ts";
 // Detection/drafting/staff notice only. Customer delivery remains a separate human-approved path.
 export async function runValueLoop(rt: Runtime, t: string, oa: string) {
   const lease = await claimAssistantOA(rt, t, oa);
@@ -51,6 +52,7 @@ export async function runValueLoop(rt: Runtime, t: string, oa: string) {
     await step("sources", () => refreshAssistantSources(rt, t, oa));
     if (rt.assistantResearchEnabled)
       await step("research", () => runDailyResearch(rt, t, oa));
+    await step("draft_repair", () => processAssistantDraftRepairs(rt, t, oa));
     // One bounded work batch per tick; the durable queue retains the rest.
     const work = await step("matching", () =>
       processAssistantWork(rt, t, oa, {

@@ -306,6 +306,7 @@ function Proposal({ p, run, reload }) {
     [reason, setReason] = useState("unspecified");
   const active = ["pending", "approved", "held"].includes(p.state);
   const needsGeneration = ["blocked", "failed", "limit", "template"].includes(p.evidence.draftMode);
+  const generating = ["generating", "retry_pending"].includes(p.evidence.draftMode);
   const action = (action, extra = {}) =>
     run(
       async () => {
@@ -331,7 +332,7 @@ function Proposal({ p, run, reload }) {
     <article className="demo-item">
       <div className="demo-proposal-top">
         <span className="demo-tag">
-          {{
+          {generating && active ? "AIが作成・再検証中" : {
             pending: "確認待ち",
             approved: "送信待ち",
             sent: "送信済み",
@@ -352,6 +353,7 @@ function Proposal({ p, run, reload }) {
         </small>
       </div>
       <p>{p.reason}</p>
+      {active && generating && <p role="status">操作は不要です。文案の検証を通過すると、通知用LINEへ自動で届きます。</p>}
       {active && needsGeneration && <p className="demo-error" role="status">AI文案はまだ完成していません。下の文章は参考テンプレートです。再生成または編集で確認を進められます。</p>}
       <pre>{p.draft}</pre>
       <small>{p.evidence.draftDetail}</small>
@@ -365,11 +367,12 @@ function Proposal({ p, run, reload }) {
         (!edit ? (
           <>
             <div className="demo-actions">
-              <button className="demo-button" disabled={p.state === "held" || needsGeneration} onClick={() => action("approve")}>
+              <button className="demo-button" disabled={p.state === "held" || needsGeneration || generating} onClick={() => action("approve")}>
                 この文面を自分のLINEへ送る
               </button>
               <button
                 className="demo-button secondary"
+                disabled={generating}
                 onClick={() => {
                   setDraft(p.draft);
                   setEdit(true);

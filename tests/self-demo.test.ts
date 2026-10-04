@@ -1102,3 +1102,44 @@ test("self demo: ambiguous current changes preserve values and block discovery/a
     assert.equal((await pendingDemoMeetings(f.rt,"t","oa",[p.customer_id])).size,0,"older unresolved history does not override a newer confirmed meeting");
   } finally {await f.dispose();}
 });
+
+
+test("self demo: property save alone repairs one invalid AI attempt and sends exactly one staff notice without customer delivery", async () => {
+  const f = await fixture();
+  try {
+    const p = await f.pair();
+    f.rt.ai = { apiKey: "fixture", model: "fixture" };
+    f.rt.assistantLine = { destination: staffDestination, token: "fixture", secret: "fixture", enabled: true };
+    await f.rt.db.query("INSERT INTO staff_line_links(tenant_id,user_id,destination,line_user_id,state,notifications,updated_at) VALUES ('t','guest',?,'staff-test','active',1,?)", [staffDestination, now()]);
+    await f.rt.db.query("UPDATE gs_demo_participants SET notifications_until=? WHERE user_id='guest'", [new Date(Date.now() + 3600000).toISOString()]);
+    const doc = await preferenceNote(f, p.customer_id, "minato-current", now());
+    await applyDemoWish(f.rt, f.ts, p.customer_id, doc, "minato-current-v1", { ...demoWish("港区", 100000000), required: ["4LDK", "所有権", "駅徒歩5分以内"], excluded: ["定期借地権"] });
+    const fetch = f.rt.externalFetch;
+    let attempts = 0;
+    f.rt.externalFetch = async (u, init) => {
+      const res = await fetch(u, init);
+      if (!String(u).includes("api.openai.com")) return res;
+      attempts++;
+      const data: any = await res.json();
+      const out = JSON.parse(data.output[0].content[0].text);
+      if (attempts === 1) out.draft += "根拠のない面積87654321平方メートル。";
+      else out.draft += "港区、9,900万円、4LDK、所有権、駅徒歩2分です。";
+      data.output[0].content[0].text = json(out);
+      return Response.json(data);
+    };
+    const added = await f.request("/api/demo/properties", { title: "港区の自動通知テスト", area: "港区", price: 99000000, layout: "4LDK", walkingMinutes: 2 });
+    assert.equal(added.status, 200, json(added.data));
+    assert.equal(attempts, 2);
+    const q = await one(f.ts, "SELECT p.*,a.evidence FROM proposals p JOIN assistant_proposals a ON a.proposal_id=p.id WHERE customer_id=?", [p.customer_id]);
+    assert.equal(q.state, "pending", q.hold_reason);
+    assert.equal(parse(q.evidence).draftMode, "generated");
+    assert.match(q.draft, /9,900万円/);
+    assert.equal((await one(f.rt.db, "SELECT COUNT(*) n FROM staff_line_notices WHERE proposal_id=? AND state='sent'", [q.id])).n, 1);
+    await scanAssistant(f.rt, "t", "oa", "guest", undefined, [p.customer_id], { generateDraft: true });
+    const { notifyAssistant } = await import("../backend/assistant-notifications.ts");
+    await notifyAssistant(f.rt, "t", "oa");
+    assert.equal(attempts, 2);
+    assert.equal(f.calls.filter(c => c.url.endsWith("/push")).length, 1);
+    assert.equal((await one(f.h, "SELECT COUNT(*) n FROM outbox")).n, 0);
+  } finally { await f.dispose(); }
+});

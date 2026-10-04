@@ -37,6 +37,7 @@ import { notifyAssistant } from "./assistant-notifications.ts";
 import {
   generateAssistantDraft,
   assistantContextHash,
+  processAssistantDraftRepairs,
 } from "./assistant-draft.ts";
 import { automationSchema, automationSettings } from "./assistant-controls.ts";
 import {
@@ -934,7 +935,10 @@ export async function scanAssistant(
           actor || customer.owner_user_id,
           pid,
           1,
+          "",
+          { automatic: true },
         );
+        await processAssistantDraftRepairs(rt, tenant, oa, pid);
         aiGenerated++;
         // 定期処理1回につきAIは1件。次回は未提案のお客様へ進む。
         break;

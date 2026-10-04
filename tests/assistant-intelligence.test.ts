@@ -9,7 +9,7 @@ import {
   decideAssistant,
   assistantGuard,
 } from "../backend/assistant.ts";
-import { generateAssistantDraft } from "../backend/assistant-draft.ts";
+import { generateAssistantDraft, processAssistantDraftRepairs, draftValidationProblem, draftOutputSchema, sourceDraftFacts } from "../backend/assistant-draft.ts";
 import {
   discoverAssistantNews,
   syncAssistantFeed,
@@ -350,7 +350,7 @@ test("assistant intelligence: provider failure is visible and daily quota preven
     );
     const fresh = (await one(f.ts, "SELECT * FROM proposals"))!;
     assert.equal(fresh.draft, p.draft);
-    assert.equal(fresh.state, "pending");
+    assert.equal(fresh.state, "held", "failed AI must not notify its original template");
     assert.match(
       (await f.request(base)).data.proposals[0].evidence.draftDetail,
       /取得できません/,
@@ -611,4 +611,114 @@ test("assistant auth: unavailable mail is reported before auth handler; Google a
   } finally {
     await f.dispose();
   }
+});
+
+
+test("automatic drafts: numeric display aliases retain grounding and URLs cannot supply unrelated numbers", () => {
+  const facts = sourceDraftFacts({ price: 99000000, checkedAt: "2026-10-04T15:19:00Z", url: "https://example.test/87654321" });
+  const text = json(facts) + " 予算100000000円、別の価格120000000円。";
+  const context = { refs: [{ id: "source:x", text }], mandatoryRefs: ["source:x"], source: null, kind: "reply" };
+  const output = draftOutputSchema.parse({ safeToSend: true, draft: "9,900万円、予算1億円、別の価格1億2000万円。2026年10月5日00:19日本時間。", contextRefs: ["source:x"], facts: [{ ref: "source:x", quote: text }] });
+  assert.equal(draftValidationProblem(output, context), null);
+  assert.match(draftValidationProblem({ ...output, draft: "価格9800万円です。" }, context)!, /9800万/);
+  assert.match(draftValidationProblem({ ...output, draft: "面積87654321です。" }, context)!, /87654321/);
+  assert.match(draftValidationProblem({ ...output, draft: "https://example.test/changed" }, context)!, /URL/);
+});
+
+// Create the queued state directly through the real generation path, then let a fresh tick resume it.
+async function queuedRepair(f: Awaited<ReturnType<typeof assistantFixture>>, mode = "number") {
+  const p = await proposal(f);
+  f.rt.ai = { apiKey: "fixture", model: "fixture" };
+  const fetch = f.rt.externalFetch;
+  let calls = 0;
+  f.rt.externalFetch = async (u, init) => {
+    const res = await fetch(u, init);
+    if (!String(u).includes("api.openai.com")) return res;
+    calls++;
+    if (mode === "provider" && calls === 1) return new Response("unavailable", { status: 503 });
+    const data: any = await res.json();
+    const out = JSON.parse(data.output[0].content[0].text);
+    if (mode === "unsafe") { out.safeToSend = false; out.reviewReason = "価格の根拠が矛盾しています"; out.draft = ""; }
+    else if (calls === 1 || mode === "always") out.draft += "価格123456789円です。";
+    data.output[0].content[0].text = json(out);
+    return Response.json(data);
+  };
+  const result = await generateAssistantDraft(f.rt, "t", "oa", "owner", p.id, p.version, "", { automatic: true });
+  return { p, result, calls: () => calls };
+}
+
+test("automatic drafts: a persisted repair resumes once, provides the failure reason and does not repeat on later ticks", async () => {
+  for (const mode of ["number", "provider"]) {
+    const f = await assistantFixture();
+    try {
+      const q = await queuedRepair(f, mode);
+      assert.equal(q.result.state, "retry_pending");
+      assert.equal((await one(f.ts, "SELECT state FROM proposals WHERE id=?", [q.p.id])).state, "held");
+      await Promise.all([processAssistantDraftRepairs({ ...f.rt }, "t", "oa"), processAssistantDraftRepairs(f.rt, "t", "oa")]);
+      const p = await one(f.ts, "SELECT p.*,a.evidence FROM proposals p JOIN assistant_proposals a ON a.proposal_id=p.id WHERE p.id=?", [q.p.id]);
+      assert.equal(p.state, "pending");
+      assert.equal(parse(p.evidence).draftMode, "generated");
+      assert.equal((await one(f.ts, "SELECT state FROM assistant_runs WHERE kind='draft_repair'")).state, "completed");
+      const input = JSON.parse(f.calls.filter(c => c.url.includes("openai.com"))[1].body.input);
+      assert.match(input.automaticRepair.problem, mode === "number" ? /123456789/ : /接続エラー/);
+      await processAssistantDraftRepairs(f.rt, "t", "oa");
+      await scanAssistant(f.rt, "t", "oa", "owner");
+      assert.equal(q.calls(), 2);
+      assert.equal((await one(f.h, "SELECT COUNT(*) n FROM outbox")).n, 0);
+    } finally { await f.dispose(); }
+  }
+});
+
+test("automatic drafts: refusal, repeated failure, changed context, edits, cancellation and exhausted budget never auto-notify unverified output", async () => {
+  for (const mode of ["unsafe", "always", "changed", "edited", "cancelled", "budget"]) {
+    const f = await assistantFixture();
+    try {
+      const q = await queuedRepair(f, mode);
+      if (mode === "changed") await f.message("c", "希望が変わりました");
+      if (mode === "edited") {
+        const p = await one(f.ts, "SELECT * FROM proposals WHERE id=?", [q.p.id]);
+        const { editAssistant } = await import("../backend/assistant.ts");
+        await editAssistant(f.rt, "t", "oa", "owner", p.id, p.version, "本人が編集した文面");
+      }
+      if (mode === "cancelled") await f.ts.query("UPDATE proposals SET state='cancelled' WHERE id=?", [q.p.id]);
+      if (mode === "budget") await f.ts.query("UPDATE assistant_budget SET used=20 WHERE kind='ai'");
+      await processAssistantDraftRepairs(f.rt, "t", "oa");
+      await processAssistantDraftRepairs(f.rt, "t", "oa");
+      assert.equal(q.calls(), mode === "always" ? 2 : 1, mode);
+      const p = await one(f.ts, "SELECT p.*,a.evidence FROM proposals p JOIN assistant_proposals a ON a.proposal_id=p.id WHERE p.id=?", [q.p.id]);
+      assert.equal(p.state, mode === "edited" ? "pending" : mode === "cancelled" ? "cancelled" : "held", mode);
+      if (mode !== "cancelled") assert.notEqual(parse(p.evidence).draftMode, "retry_pending", mode);
+      if (mode === "edited") assert.equal(p.draft, "本人が編集した文面");
+      assert.equal((await one(f.h, "SELECT COUNT(*) n FROM outbox")).n, 0);
+    } finally { await f.dispose(); }
+  }
+});
+
+
+test("automatic drafts: an interrupted repair is held without replaying an ambiguous paid request", async () => {
+  const f = await assistantFixture();
+  try {
+    const q = await queuedRepair(f);
+    await f.ts.query("UPDATE assistant_runs SET state='running',created_at=? WHERE kind='draft_repair'", [new Date(Date.now() - 6 * 60000).toISOString()]);
+    await processAssistantDraftRepairs(f.rt, "t", "oa");
+    await processAssistantDraftRepairs(f.rt, "t", "oa");
+    assert.equal(q.calls(), 1);
+    assert.equal((await one(f.ts, "SELECT state FROM assistant_runs WHERE kind='draft_repair'")).state, "interrupted");
+    const p = await one(f.ts, "SELECT p.*,a.evidence FROM proposals p JOIN assistant_proposals a ON a.proposal_id=p.id WHERE p.id=?", [q.p.id]);
+    assert.equal(p.state, "held");
+    assert.equal(parse(p.evidence).draftMode, "blocked");
+    assert.match(p.hold_reason, /中断/);
+  } finally { await f.dispose(); }
+});
+
+test("automatic drafts: the scheduled value loop resumes a queued repair after the property request ends", async () => {
+  const f = await assistantFixture();
+  try {
+    const q = await queuedRepair(f);
+    const { runValueLoop } = await import("../backend/assistant-value-loop.ts");
+    const result = await runValueLoop(f.rt, "t", "oa");
+    assert.deepEqual(result.issues, []);
+    assert.equal(q.calls(), 2);
+    assert.equal((await one(f.ts, "SELECT state FROM assistant_runs WHERE kind='draft_repair'")).state, "completed");
+  } finally { await f.dispose(); }
 });
