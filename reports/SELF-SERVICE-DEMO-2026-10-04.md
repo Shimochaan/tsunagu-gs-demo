@@ -26,11 +26,14 @@
 - platform：0013_self_demo.sql適用。
 - LINE Harness：0003_self_demo_proof.sql適用。
 - Harness配備版：`3c184c2c-3d6a-4495-8c29-399a89ec3c82`。
-- つなぐ配備版：`826b48b4-c7a9-4523-bca2-bc0f9dec94b2`（配布用HTML/PDFガイドを同梱）。
+- つなぐ配備版：`cca1ae87-9c8a-41ad-84c0-14abb8103a53`（配布用HTML/PDFガイドを同梱）。
+- TimeRex予約先は `https://timerex.net/s/gs-estate/59cbab21`。通知認証の設定が未完了の間は予約ボタンを表示せず、接続準備中と案内。設定後は自動更新で利用可能になる。未設定／設定済みの両方をテスト済み。
 - 公開入口 `/demo` が新しい画面を返すこと、`/api/config` でGoogle・セルフデモ有効、未認証 `/api/demo` が401を返すことを確認。
 - 実ブラウザーでログイン済み本人の参加登録、通知LINEの既存連携、顧客役LINEの確認メッセージ発行を確認。
 
 - URL・QR付きHTML/PDFを公開。PDF2ページ・日本語表示・4つのリンクを確認。公開用に切り出したツリーでも型チェック・86件のテスト・ビルド成功。
+
+- 公開GitHub：[Shimochaan/tsunagu-gs-demo](https://github.com/Shimochaan/tsunagu-gs-demo)。認証なしのAPIでpublic=true、READMEを200で取得できることを確認。ソースとPDF・HTML・提出文をアップロード済み。Node 22/26の[GitHub Actions](https://github.com/Shimochaan/tsunagu-gs-demo/actions/runs/37207972620)で型・86件のテスト・ビルドが成功。
 
 ## 完了前に残る実機確認
 
@@ -39,7 +42,7 @@
 - このフローで議事録解析→自動文案→編集→承認→実LINE受信。
 - 実TimeRex予約→Webhook→顧客／担当者LINE通知、取消の通し確認。
 - 初回利用の別Googleアカウントでの通し確認。
-- 公開GitHubリポジトリは作成済み。コードと資料のアップロード・第三者閲覧を確認中。
+
 
 ## 利用枠と補足
 

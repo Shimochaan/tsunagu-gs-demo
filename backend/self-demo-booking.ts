@@ -5,7 +5,7 @@ import type { Hono } from "hono";
 import { all, one, now, id, json, parse } from "./db.ts";
 import { digest, requireThat } from "./security.ts";
 import { holdCustomer } from "./sales.ts";
-import { demoBookingUrl } from "./self-demo-access.ts";
+import { demoBookingUrl, demoBookingConfigured } from "./self-demo-access.ts";
 
 async function bookingOwner(rt: Runtime, token: string) {
   requireThat(
@@ -35,6 +35,7 @@ export async function demoBookingView(rt: Runtime, token: string) {
     [p.user_id],
   );
   if (rt.selfDemo?.timerexUrl) {
+    const configured = await demoBookingConfigured(rt);
     const url = new URL(rt.selfDemo.timerexUrl);
     url.searchParams.set("tracking_token", token);
     return {
@@ -42,9 +43,10 @@ export async function demoBookingView(rt: Runtime, token: string) {
       booking: b,
       timezone: "Asia/Tokyo",
       mode: "timerex",
-      timerexUrl: url.href,
+      configured,
+      timerexUrl: configured ? url.href : null,
       message:
-        "TimeRexの空き日時から予約できます。予約完了・変更・取消を、本人確認した顧客用LINEへお知らせします。体験後は予約を取り消してください。",
+        configured ? "TimeRexの空き日時から予約できます。予約完了・変更・取消を、本人確認した顧客用LINEへお知らせします。体験後は予約を取り消してください。" : "予約通知の接続を準備しています。接続完了後、この画面から予約できるようになります。議事録・物件・文案の体験は続けられます。",
     };
   }
   return {

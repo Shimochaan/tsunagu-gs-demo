@@ -425,6 +425,10 @@ test("self demo: booking token maps only to self, repeats and stale versions can
       }),
     );
     f.rt.selfDemo!.timerexUrl = "https://timerex.net/s/gs-estate/59cbab21";
+    const pending = await demoBookingView(f.rt, token);
+    assert.equal(pending.configured, false);
+    assert.equal(pending.timerexUrl, null, "do not reserve a real slot before receipt transport is configured");
+    f.rt.timerexSecrets = { oa: "fixture-webhook-secret" };
     const view = await demoBookingView(f.rt, token);
     assert.equal(view.mode, "timerex");
     assert.equal(

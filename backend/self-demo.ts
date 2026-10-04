@@ -8,6 +8,7 @@ import {
   isDemoGuest,
   demoBookingToken,
   demoBookingUrl,
+  demoBookingConfigured,
   claimDemoAI,
 } from "./self-demo-access.ts";
 import { getCredential } from "./credentials.ts";
@@ -488,6 +489,7 @@ export async function demoSnapshot(rt: Runtime, actor: string) {
     })),
     bookings,
     bookingUrl: await demoBookingUrl(rt, p.customer_id),
+    bookingConfigured: await demoBookingConfigured(rt),
     aiRemaining: Math.max(0, 12 - usage!.n),
     feedback,
     messages,

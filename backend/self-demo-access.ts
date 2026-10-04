@@ -89,3 +89,9 @@ export async function demoBookingToken(rt: Runtime, customer: string) {
 export async function demoBookingUrl(rt: Runtime, customer: string) {
   return rt.origin + "/demo/book/" + (await demoBookingToken(rt, customer));
 }
+export async function demoBookingConfigured(rt: Runtime) {
+  if (!rt.selfDemo?.timerexUrl) return true;
+  return !!(rt.timerexSecrets?.[rt.selfDemo.oa] || await one(rt.db,
+    "SELECT 1 FROM credentials WHERE tenant_id=? AND oa_id=? AND service='timerex' AND ciphertext IS NOT NULL",
+    [rt.selfDemo.tenant, rt.selfDemo.oa]));
+}

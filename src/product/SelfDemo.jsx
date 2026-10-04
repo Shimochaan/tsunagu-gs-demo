@@ -942,6 +942,7 @@ export function SelfDemo({ me }) {
                   >
                     自分の予約ページを開く
                   </a>
+                  {data.bookingConfigured === false && <p className="demo-muted">予約通知の接続を準備中です。接続完了後に日程を選べます。</p>}
                   {data.bookings.map((b) => (
                     <p key={b.id} className="demo-success">
                       {b.state === "cancelled" ? "取消済み" : "予約済み"}：
@@ -1076,17 +1077,17 @@ export function PublicDemoPage({ path }) {
           )}
           {data.mode === "timerex" ? (
             <div className="demo-step">
-              <a
+              {data.configured !== false && <a
                 className="demo-button"
                 href={data.timerexUrl}
                 target="_blank"
                 rel="noreferrer"
               >
                 TimeRexで空き日時を選ぶ
-              </a>
-              <p>
+              </a>}
+              {data.configured !== false && <p>
                 予約が完了すると、顧客用LINEに確認が届きます。TimeRexの完了メールから日時の変更・取消ができます。
-              </p>
+              </p>}
               <p className="demo-muted">予約結果はこの画面にも自動で反映されます。</p>
               <button className="demo-button secondary" onClick={load}>
                 予約結果を確認する
