@@ -1,7 +1,7 @@
 import { sourceContradiction } from "./assistant-match.ts";
 import { z } from "zod";
 import type { Runtime } from "./runtime.ts";
-import { json, now, type Query } from "./db.ts";
+import { all, json, now, type Query, type Database } from "./db.ts";
 import { digest, requireThat } from "./security.ts";
 import { driveAccessToken, ownDrive } from "./drive.ts";
 import { sourceSchema } from "./assistant.ts";
@@ -284,9 +284,28 @@ export async function readPropertySheet(
     .slice(0, 12);
   return {
     ...parsePropertyRows(rows, prefix),
+    rows, prefix,
     hash: await digest(json({ sheet: sheet.sheetId, rows })),
     modifiedTime: after.modifiedTime,
   };
+}
+// Capture before reading Google. A queued/new/completed write invalidates the whole
+// import transaction, including its checkpoint, so the next poll reads a fresh sheet.
+export const demoSheetWritesUnchanged = `(SELECT json_group_array(json_array(source_id,state,request_hash,config_version)) FROM (SELECT source_id,state,request_hash,config_version FROM demo_sheet_writes WHERE spreadsheet_id=? ORDER BY source_id))=?`;
+export async function demoSheetWriteSnapshot(db: Database, spreadsheetId: string) {
+  const rows=await all(db,"SELECT * FROM demo_sheet_writes WHERE spreadsheet_id=? ORDER BY source_id",[spreadsheetId]);
+  return {exports:new Map(rows.map(j=>[j.source_id,j])),token:json(rows.map(j=>[j.source_id,j.state,j.request_hash,j.config_version]))};
+}
+export async function mapDemoSheetSources(db: Database, snapshot: Awaited<ReturnType<typeof readPropertySheet>>, spreadsheetId: string, writes?: Awaited<ReturnType<typeof demoSheetWriteSnapshot>>) {
+  const {exports}=writes || await demoSheetWriteSnapshot(db,spreadsheetId);
+  const pendingIds=[...exports.values()].filter(j=>j.state!=="synced").map(j=>j.source_id);
+  snapshot.sources=snapshot.sources.flatMap(s=>{
+    const raw=s.id.slice(("sheet-"+snapshot.prefix+"-").length),j=exports.get(raw);
+    if(!j)return [s];
+    if(j.state!=="synced")return [];
+    return [sourceSchema.parse({...s,id:j.source_id,audienceCustomerId:j.customer_id})];
+  });
+  return {exports,pendingIds};
 }
 export async function previewProperties(
   rt: Runtime,
@@ -368,6 +387,7 @@ export async function importProperties(
     "SOURCE_INDUSTRY_MISMATCH",
     "不動産事業で使用してください。",
   );
+  const writes = await demoSheetWriteSnapshot(db, c.settings.spreadsheetId!);
   const r = await readPropertySheet(rt, t, oa, actor, c.settings);
   requireThat(
     r.hash === review.hash &&
@@ -377,9 +397,11 @@ export async function importProperties(
     "SHEET_CHANGED",
     "確認後に内容または鮮度が変わりました。再確認してください。",
   );
+  const {exports,pendingIds}=await mapDemoSheetSources(db,r,c.settings.spreadsheetId!,writes);
   // One atomic tenant DB batch: sources, withdrawn stock, and consumed review.
   const guard =
-    "EXISTS(SELECT 1 FROM assistant_google_config WHERE review_id=? AND version=? AND review_state='ready')";
+    `EXISTS(SELECT 1 FROM assistant_google_config WHERE review_id=? AND version=? AND review_state='ready') AND ${demoSheetWritesUnchanged}`;
+  const guardParams=[reviewId,c.version,c.settings.spreadsheetId!,writes.token];
   const queries: Query[] = r.sources.map((s) => ({
     sql: `INSERT INTO assistant_sources(id,kind,title,url,published_at,event_at,checked_at,expires_at,data,updated_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE ${guard} ON CONFLICT(id) DO UPDATE SET title=excluded.title,url=excluded.url,published_at=excluded.published_at,checked_at=excluded.checked_at,expires_at=excluded.expires_at,data=excluded.data,version=version+1,updated_at=excluded.updated_at WHERE data<>excluded.data`,
     params: [
@@ -393,24 +415,27 @@ export async function importProperties(
       s.expiresAt,
       json(s),
       now(),
-      reviewId,
-      c.version,
+      ...guardParams,
     ],
   }));
   queries.push({
-    sql: `UPDATE assistant_sources SET data=json_set(data,'$.status','unpublished','$.stock',0),version=version+1,updated_at=? WHERE id LIKE 'sheet-%' AND id NOT IN (${r.sources.map(() => "?").join(",")}) AND json_extract(data,'$.status')<>'unpublished' AND ${guard}`,
-    params: [now(), ...r.sources.map((s) => s.id), reviewId, c.version],
+    sql: `UPDATE assistant_sources SET data=json_set(data,'$.status','unpublished','$.stock',0),version=version+1,updated_at=? WHERE (id LIKE 'sheet-%' OR id IN (SELECT source_id FROM demo_sheet_writes WHERE spreadsheet_id=? AND state='synced')) AND id NOT IN (SELECT value FROM json_each(?)) AND json_extract(data,'$.status')<>'unpublished' AND ${guard}`,
+    params: [now(), c.settings.spreadsheetId!,json([...r.sources.map((s)=>s.id),...pendingIds]),...guardParams],
   });
+  for(const s of r.sources) {
+    const j=exports.get(s.id),row=r.rows.find(x=>x[0]===s.id);
+    if(j && row)queries.push({sql:`UPDATE demo_sheet_writes SET synced_row=?,row_json=? WHERE source_id=? AND state='synced' AND ${guard}`,params:[json(row),json(row),s.id,...guardParams]});
+  }
   queries.push({
-    sql: "UPDATE assistant_google_config SET review_state='imported' WHERE id='default' AND review_id=? AND version=? AND review_state='ready'",
-    params: [reviewId, c.version],
+    sql: `UPDATE assistant_google_config SET review_state='imported' WHERE id='default' AND ${guard}`,
+    params: guardParams,
   });
   const results = await db.batch(queries);
   requireThat(
     results.at(-1)?.changes === 1,
     409,
     "REVIEW_INVALID",
-    "確認が取消・確定済みです。",
+    "確認が取消・確定済み、または物件の保存状態が変わりました。再確認してください。",
   );
   return { imported: r.sources.length, messagesSent: 0 };
 }

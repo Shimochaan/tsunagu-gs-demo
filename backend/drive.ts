@@ -24,6 +24,7 @@ import {
   driveFolderId,
 } from "./recording-sources.ts";
 export const driveScope = "https://www.googleapis.com/auth/drive.readonly";
+export const sheetWriteScope = "https://www.googleapis.com/auth/spreadsheets";
 import { googleAPIError } from "./google-api-errors.ts";
 
 const driveId = z.string().regex(/^[\w-]{1,200}$/);
@@ -145,7 +146,7 @@ async function eligibleConnection(rt: Runtime, con: Row) {
     "接続した担当者の権限を確認してください。",
   );
 }
-export async function scanDrive(rt: Runtime, con: Row) {
+export async function scanDrive(rt: Runtime, con: Row, intervalMs = 300000) {
   await eligibleConnection(rt, con);
   const cfg = parse(con.config);
   if (!cfg.roots?.length) {
@@ -276,7 +277,7 @@ export async function scanDrive(rt: Runtime, con: Row) {
           queue,
           visitedFiles: queue.length ? visitedFiles : [],
           nextScanAt: new Date(
-            (Math.floor(Date.now() / 300000) + 1) * 300000,
+            (Math.floor(Date.now() / intervalMs) + 1) * intervalMs,
           ).toISOString(),
           seen: queue.length ? seen : [],
           leaseUntil: null,
@@ -306,17 +307,17 @@ export async function scanDrive(rt: Runtime, con: Row) {
 }
 export async function pollDrive(
   rt: Runtime,
-  scope?: { tenant: string; oa: string },
+  scope?: { tenant: string; oa: string; fast?: boolean },
 ) {
   if (rt.driveManualOnly) return;
   const rows = await all(
     rt.db,
-    "SELECT * FROM connections WHERE service LIKE 'google_drive:%' AND state IN ('connected','syncing') AND (? IS NULL OR (tenant_id=? AND oa_id=?)) AND (last_sync_at IS NULL OR COALESCE(json_extract(config,'$.nextScanAt'),last_sync_at)<=?) ORDER BY COALESCE(last_sync_at,'') LIMIT 2",
-    [scope?.tenant || null, scope?.tenant || null, scope?.oa || null, now()],
+    "SELECT * FROM connections WHERE service LIKE 'google_drive:%' AND state IN ('connected','syncing') AND (? IS NULL OR (tenant_id=? AND oa_id=?)) AND (?=1 OR last_sync_at IS NULL OR COALESCE(json_extract(config,'$.nextScanAt'),last_sync_at)<=?) ORDER BY COALESCE(last_sync_at,'') LIMIT 2",
+    [scope?.tenant || null, scope?.tenant || null, scope?.oa || null, Number(scope?.fast || false), now()],
   );
   for (const con of rows) {
     try {
-      await scanDrive(rt, con);
+      await scanDrive(rt, con, scope?.fast ? 30000 : 300000);
     } catch (error) {
       await rt.db.query(
         "UPDATE connections SET last_sync_at=?,last_error=?,state=CASE WHEN ?=403 THEN 'reconnect' ELSE state END WHERE id=?",
@@ -467,6 +468,7 @@ export function registerDrive(app: Hono<AppEnv>) {
             lastSync: r.last_sync_at,
             error: r.last_error,
             mine: v.actor === actor,
+            canWriteSheets: v.canWriteSheets === true,
             remaining: v.queue?.length || 0,
           };
         }),
@@ -476,6 +478,9 @@ export function registerDrive(app: Hono<AppEnv>) {
   app.post(base + "/authorize", async (c) => {
     const a = await recordingAccess(c),
       p = c.get("principal");
+    const body = await c.req.text();
+    const input = z.object({ sheetWrite: z.boolean().default(false) }).strict().parse(body.trim() ? JSON.parse(body) : {});
+    requireThat(!input.sheetWrite || has(a.m, "org_owner", "sys_admin"), 403, "FORBIDDEN", "商品マスターへの保存は管理者が許可してください。");
     requireThat(
       a.rt.googleOAuth,
       503,
@@ -527,7 +532,8 @@ export function registerDrive(app: Hono<AppEnv>) {
       client_id: a.rt.googleOAuth!.clientId,
       redirect_uri: `${a.rt.origin}/api/drive/callback`,
       response_type: "code",
-      scope: `openid email ${driveScope}`,
+      scope: `openid email ${driveScope}${input.sheetWrite ? " " + sheetWriteScope : ""}`,
+      include_granted_scopes: "true",
       access_type: "offline",
       prompt: "consent",
       state,
@@ -667,6 +673,7 @@ export function registerDrive(app: Hono<AppEnv>) {
         same = prev.email === u.email;
       const cfg = {
         actor: p.user.id,
+        canWriteSheets: String(token.scope).split(" ").includes(sheetWriteScope),
         email: u.email,
         hostEmail: same ? prev.hostEmail : u.email,
         roots: same

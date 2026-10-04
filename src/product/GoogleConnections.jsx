@@ -192,6 +192,10 @@ export function ConnectionSteps({ tenant, oa, customers = [] }) {
           >
             {mine ? "Googleに再接続" : "Googleに接続"}
           </Action>
+          {mine && <Action disabled={!data.enabled} run={async () => {
+            const r = await api(`${drive}/authorize`, { sheetWrite: true });
+            location.assign(r.url);
+          }}>{mine.canWriteSheets ? "商品マスターの書き込み許可を更新" : "商品マスターへの保存を許可する"}</Action>}
           {mine && (
             <Action
               run={async () => {

@@ -1,6 +1,6 @@
 import { demoBookingUrl, isDemoCustomer } from "./self-demo-access.ts";
 import { pendingDemoMeetings } from "./self-demo-preferences.ts";
-import { normalizeTag, sourceContradiction, matchesWish, sourceContentHash } from "./assistant-match.ts";
+import { normalizeTag, sourceContradiction, matchesWish, sourceContentHash, wishContentKey } from "./assistant-match.ts";
 import { feedbackQuery, learningInput, decisionInput, type LearningInput } from "./assistant-learning.ts";
 import { publishProposalEvent, registerProposalEvents } from "./proposal-events.ts";
 import { businessProfile, registerBusiness } from "./business.ts";
@@ -27,7 +27,7 @@ import {
   finishAssistantOA,
 } from "./assistant-work.ts";
 import type { Hono, Context } from "hono";
-import { all, one, now, id, json, parse, type Row } from "./db.ts";
+import { all, one, now, id, json, parse, type Row, type Database } from "./db.ts";
 import type { AppEnv, Runtime } from "./runtime.ts";
 import { accountFor, member, customerAccess, has } from "./access.ts";
 import { requireThat, audit, digest } from "./security.ts";
@@ -283,6 +283,7 @@ async function evidenceProblem(
     if (!s || s.version !== ev.sourceVersion)
       return "ニュース・商品情報が変更されています。内容を再確認してください。";
     if ((parse(s.data).audienceCustomerId && parse(s.data).audienceCustomerId !== p.customer_id)) return "この体験者向けの情報ではありません。";
+    if (rt.selfDemo && await one(ts,"SELECT source_id FROM demo_sheet_writes WHERE source_id=? AND state<>'synced'",[s.id])) return "商品マスターへの保存を確認中です。";
     const reason = sourceProblem(s);
     if (reason) return reason;
   }
@@ -295,6 +296,8 @@ async function evidenceProblem(
     if (!note || (await digest(json(note))) !== ev.noteHash)
       return "根拠の商談メモが変更・削除されています。";
   }
+  if (p.state!=='sent' && ev.preferences && ev.sourceId && ev.sourceContentHash && await deliveredSameProperty(ts,p.customer_id,ev.sourceId,ev.sourceContentHash,ev.businessVersion||0,ev.preferences))
+    return "同じ希望条件・同じ物件内容のご案内は送信済みです。";
   if (ev.preferenceVersion) {
     const pref = await one(
       ts,
@@ -366,6 +369,11 @@ export async function assistantDeliveryGuard(
     "承認時の本文・宛先・根拠と一致しません。",
   );
 }
+async function deliveredSameProperty(db: Database, customer: string, source: string, contentHash: string, businessVersion: number, wish: Row) {
+  const delivered=await all(db,"SELECT a.evidence FROM proposals p JOIN assistant_proposals a ON a.proposal_id=p.id WHERE p.customer_id=? AND p.state='sent' AND json_extract(a.evidence,'$.sourceId')=? AND json_extract(a.evidence,'$.sourceContentHash')=? AND COALESCE(json_extract(a.evidence,'$.businessVersion'),0)=?",[customer,source,contentHash,businessVersion]);
+  return delivered.some(r=>{const prior=parse(r.evidence).preferences;return prior?.area && wishContentKey(prior)===wishContentKey(wish);});
+}
+
 export async function upsertSource(
   rt: Runtime,
   tenant: string,
@@ -463,7 +471,7 @@ export async function scanAssistant(
   const sources = (
     await all(
       ts,
-      "SELECT * FROM assistant_sources ORDER BY published_at DESC LIMIT 100",
+      rt.selfDemo ? "SELECT * FROM assistant_sources WHERE id NOT IN (SELECT source_id FROM demo_sheet_writes WHERE state<>'synced') ORDER BY published_at DESC LIMIT 100" : "SELECT * FROM assistant_sources ORDER BY published_at DESC LIMIT 100",
     )
   ).filter((s) => !sourceProblem(s) && (!business.industry || parse(s.data).industry === business.industry));
   const customers = await all(
@@ -801,6 +809,9 @@ export async function scanAssistant(
         if (s.kind === "product" && ((!profile && !wish) || (wish && !matchesWish(d,wish)))) continue;
         const contentHash = await sourceContentHash(s);
         if(await one(ts,"SELECT e.id FROM assistant_feedback e JOIN assistant_feedback a ON a.proposal_id=e.proposal_id AND a.version=e.version AND a.action='approved' AND a.excluded=0 WHERE e.category='fact' AND e.source_id=? AND json_extract(e.details,'$.sourceContentHash')=? AND e.excluded=0 LIMIT 1",[s.id,contentHash])) continue;
+        // Reconfirming the same wishes in another meeting must not reoffer an
+        // unchanged property already delivered to this customer.
+        if(s.kind==='product' && wish && await deliveredSameProperty(ts,customer.id,s.id,contentHash,business.version,wish)) continue;
         // Deduplicate semantic updates, not polling time or row version counters.
         if (await one(ts,"SELECT p.id FROM proposals p JOIN assistant_proposals a ON a.proposal_id=p.id WHERE p.customer_id=? AND json_extract(a.evidence,'$.sourceId')=? AND json_extract(a.evidence,'$.sourceContentHash')=? AND COALESCE(json_extract(a.evidence,'$.businessVersion'),0)=? AND COALESCE(json_extract(a.evidence,'$.preferenceVersion'),0)=? AND COALESCE(json_extract(a.evidence,'$.followupVersion'),0)=? LIMIT 1",[customer.id,s.id,contentHash,business.version,pref?.version||0,profile?.version||0])) continue;
         kind = s.kind;

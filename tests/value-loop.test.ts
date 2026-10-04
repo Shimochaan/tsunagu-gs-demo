@@ -733,3 +733,26 @@ test("simulation: fixture wording must say it is a test; numeric/source validati
     /数値/,
   );
 });
+
+
+test('loop: another meeting with equivalent wishes does not reoffer a delivered property; changed wishes or property contents do',async()=>{
+  const f=await assistantFixture();
+  try {
+    await wishes(f);const s=property();await upsertSource(f.rt,'t','oa',s);
+    assert.equal((await scanAssistant(f.rt,'t','oa','owner',undefined,['c'],{allowAutoAI:false})).created,1);
+    await f.ts.query("UPDATE proposals SET state='sent'");
+    const sent=await one(f.ts,'SELECT * FROM proposals');
+    await f.ts.query("INSERT INTO assistant_proposals SELECT 'legacy-duplicate',dedupe_key||':legacy',kind,line_user_id,owner_user_id,evidence,expires_at,snoozed_until FROM assistant_proposals WHERE proposal_id=?",[sent.id]);
+    assert.match((await assistantGuard(f.rt,'t','oa',{...sent,id:'legacy-duplicate',state:'pending'}))!,/送信済み/);
+    await f.ts.query("DELETE FROM assistant_proposals WHERE proposal_id='legacy-duplicate'");
+    await f.ts.query("INSERT INTO context_notes(id,customer_id,source,body,confirmed_by,created_at) VALUES ('n2','c','human','新宿区・65000000円以内・3LDK・所有権・駅徒歩15分以内。定期借地権は除外。希望の変更なし。','owner',?)",[now()]);
+    const body={noteId:'n2',area:'新宿区',maxPrice:65000000,required:['所有権','駅徒歩15分以内','３ＬＤＫ'],excluded:['定期借地権']};
+    assert.equal((await f.request(base+'/preferences/c',body)).status,200);
+    assert.equal((await scanAssistant(f.rt,'t','oa','owner',undefined,['c'],{allowAutoAI:false})).created,0);
+    assert.equal((await f.request(base+'/preferences/c',{...body,maxPrice:64000000})).status,200);
+    assert.equal((await scanAssistant(f.rt,'t','oa','owner',undefined,['c'],{allowAutoAI:false})).created,1);
+    await f.ts.query("UPDATE proposals SET state='sent'");
+    await upsertSource(f.rt,'t','oa',{...s,price:48000000,checkedAt:now()});
+    assert.equal((await scanAssistant(f.rt,'t','oa','owner',undefined,['c'],{allowAutoAI:false})).created,1);
+  } finally {await f.dispose();}
+});

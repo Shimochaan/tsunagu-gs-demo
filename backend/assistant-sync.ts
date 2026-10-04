@@ -7,7 +7,12 @@ import {
   googleGET,
   googleAdmin,
 } from "./assistant-google-store.ts";
-import { readPropertySheet } from "./assistant-sheets.ts";
+import {
+  readPropertySheet,
+  mapDemoSheetSources,
+  demoSheetWriteSnapshot,
+  demoSheetWritesUnchanged,
+} from "./assistant-sheets.ts";
 import { businessProfile } from "./business.ts";
 import { requireThat } from "./security.ts";
 
@@ -82,6 +87,7 @@ export async function syncPropertySheet(
       );
       return { changed: 0, skipped: "unchanged" };
     }
+    const writes = await demoSheetWriteSnapshot(db, c.settings.spreadsheetId);
     const snapshot = await readPropertySheet(
       rt,
       t,
@@ -89,8 +95,19 @@ export async function syncPropertySheet(
       c.row.actor,
       c.settings,
     );
-    const guard =
-      "EXISTS(SELECT 1 FROM assistant_google_config WHERE id='default' AND version=?) AND EXISTS(SELECT 1 FROM assistant_sheet_sync WHERE id='default' AND lease_id=?)";
+    const { exports, pendingIds } = await mapDemoSheetSources(
+      db,
+      snapshot,
+      c.settings.spreadsheetId,
+      writes,
+    );
+    const guard = `EXISTS(SELECT 1 FROM assistant_google_config WHERE id='default' AND version=?) AND EXISTS(SELECT 1 FROM assistant_sheet_sync WHERE id='default' AND lease_id=?) AND ${demoSheetWritesUnchanged}`;
+    const guardParams = [
+      c.version,
+      lease,
+      c.settings.spreadsheetId,
+      writes.token,
+    ];
     const qs: Query[] = snapshot.sources.map((s) => ({
       sql: `INSERT INTO assistant_sources(id,kind,title,url,published_at,event_at,checked_at,expires_at,data,updated_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE ${guard} ON CONFLICT(id) DO UPDATE SET title=excluded.title,url=excluded.url,published_at=excluded.published_at,checked_at=excluded.checked_at,expires_at=excluded.expires_at,data=excluded.data,version=version+1,updated_at=excluded.updated_at WHERE data<>excluded.data`,
       params: [
@@ -104,22 +121,30 @@ export async function syncPropertySheet(
         s.expiresAt,
         json(s),
         now(),
-        c.version,
-        lease,
+        ...guardParams,
       ],
     }));
     // Deleted or invalid rows stop being sendable immediately. Valid rows can still progress.
     qs.push({
-      sql: `UPDATE assistant_sources SET data=json_set(data,'$.status','unpublished','$.stock',0),version=version+1,updated_at=? WHERE id LIKE 'sheet-%' AND id NOT IN (SELECT value FROM json_each(?)) AND json_extract(data,'$.status')<>'unpublished' AND ${guard}`,
+      sql: `UPDATE assistant_sources SET data=json_set(data,'$.status','unpublished','$.stock',0),version=version+1,updated_at=? WHERE (id LIKE 'sheet-%' OR id IN (SELECT source_id FROM demo_sheet_writes WHERE spreadsheet_id=? AND state='synced')) AND id NOT IN (SELECT value FROM json_each(?)) AND json_extract(data,'$.status')<>'unpublished' AND ${guard}`,
       params: [
         now(),
-        json(snapshot.sources.map((s) => s.id)),
-        c.version,
-        lease,
+        c.settings.spreadsheetId,
+        json([...snapshot.sources.map((s) => s.id), ...pendingIds]),
+        ...guardParams,
       ],
     });
+    for (const s of snapshot.sources) {
+      const j = exports.get(s.id),
+        row = snapshot.rows.find((r) => r[0] === s.id);
+      if (j && row)
+        qs.push({
+          sql: `UPDATE demo_sheet_writes SET synced_row=?,row_json=? WHERE source_id=? AND state='synced' AND ${guard}`,
+          params: [json(row), json(row), s.id, ...guardParams],
+        });
+    }
     qs.push({
-      sql: `UPDATE assistant_sheet_sync SET config_version=?,spreadsheet_id=?,modified_time=?,checked_at=?,state=?,detail=?,lease_id=NULL,lease_until=NULL WHERE id='default' AND lease_id=? AND EXISTS(SELECT 1 FROM assistant_google_config WHERE id='default' AND version=?)`,
+      sql: `UPDATE assistant_sheet_sync SET config_version=?,spreadsheet_id=?,modified_time=?,checked_at=?,state=?,detail=?,lease_id=NULL,lease_until=NULL WHERE id='default' AND lease_id=? AND EXISTS(SELECT 1 FROM assistant_google_config WHERE id='default' AND version=?) AND ${demoSheetWritesUnchanged}`,
       params: [
         c.version,
         meta.id,
@@ -134,6 +159,8 @@ export async function syncPropertySheet(
         }),
         lease,
         c.version,
+        c.settings.spreadsheetId,
+        writes.token,
       ],
     });
     const results = await db.batch(qs);
@@ -141,7 +168,7 @@ export async function syncPropertySheet(
       results.at(-1)?.changes === 1,
       409,
       "CONFIG_CHANGED",
-      "読み取り中に接続設定が変わりました。",
+      "読み取り中に接続設定または物件の保存状態が変わりました。次の自動確認で取得し直します。",
     );
     return {
       changed: results.slice(0, -1).reduce((n, r) => n + r.changes, 0),

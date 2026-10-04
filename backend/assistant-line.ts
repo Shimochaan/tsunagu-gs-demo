@@ -1,3 +1,4 @@
+import { linkDemoMeetingFromLine } from "./demo-meeting-line.ts";
 import { demoStaffAllowed } from "./self-demo-access.ts";
 import {
   notifyAssistant,
@@ -36,7 +37,7 @@ export async function staffLineReady(rt: Runtime) {
     conf.destination,
   ]));
 }
-async function lineRequest(
+export async function lineRequest(
   rt: Runtime,
   path: string,
   body: Row,
@@ -419,6 +420,14 @@ export function registerAssistantLineWebhook(app: Hono<AppEnv>) {
         );
         await member(rt, binding.user_id, binding.tenant_id);
         if (event.type === "postback") {
+          const meeting = event.postback?.data.match(/^demo-meeting:([a-f0-9-]+):(link|skip)$/);
+          if (meeting) {
+            const linked = await linkDemoMeetingFromLine(rt, binding, meeting[1], meeting[2]);
+            await reply(rt, event.replyToken, linked.message);
+            // The durable document queue is consumed by the fast loop/Cron.
+            // Do not chain paid extraction and drafting into LINE's short-lived webhook.
+            continue;
+          }
           const match = event.postback?.data.match(
             /^assistant:([a-f0-9-]+):(approve|cancel|later|edit)$/,
           );

@@ -1,0 +1,2 @@
+CREATE TABLE IF NOT EXISTS demo_sheet_writes (source_id TEXT PRIMARY KEY,user_id TEXT NOT NULL,customer_id TEXT NOT NULL,spreadsheet_id TEXT NOT NULL,config_version INTEGER NOT NULL,request_hash TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'queued',source_version INTEGER NOT NULL,row_json TEXT NOT NULL,synced_row TEXT,attempts INTEGER NOT NULL DEFAULT 0,next_at TEXT NOT NULL DEFAULT '',lease_id TEXT,lease_until TEXT,error TEXT,updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS demo_sheet_writes_work ON demo_sheet_writes(state,next_at);

@@ -1,3 +1,7 @@
+import { queueDemoSheetWrite, processDemoSheetWrites } from "./demo-sheet-sync.ts";
+import { googleDB, googleConfig } from "./assistant-google-store.ts";
+import { runValueLoop } from "./assistant-value-loop.ts";
+import { notifyDemoMeetings, demoLiveState } from "./demo-meeting-line.ts";
 import { z } from "zod";
 import type { Hono } from "hono";
 import type { Runtime, AppEnv } from "./runtime.ts";
@@ -36,7 +40,7 @@ function config(rt: Runtime) {
   requireThat(rt.selfDemo, 404, "NOT_FOUND", "体験環境ではありません。");
   return rt.selfDemo;
 }
-async function participant(rt: Runtime, actor: string, linked = false) {
+export async function participant(rt: Runtime, actor: string, linked = false) {
   config(rt);
   const p = await demoParticipant(rt, actor);
   requireThat(
@@ -80,6 +84,7 @@ export async function startDemo(
   user: { id: string; name: string },
 ) {
   const { tenant, oa, capacity } = config(rt);
+  await demoLiveState(rt);
   const existing = await demoParticipant(rt, user.id);
   if (existing)
     requireThat(
@@ -389,6 +394,7 @@ export async function processDemoWork(rt: Runtime) {
   for (const d of docs) await processDemoDocument(rt, d.user_id, d.id);
 }
 export async function demoSnapshot(rt: Runtime, actor: string) {
+  await demoLiveState(rt);
   const { tenant, oa } = config(rt),
     p = await demoParticipant(rt, actor);
   if (!p) return { started: false, tenant, oa };
@@ -456,7 +462,12 @@ export async function demoSnapshot(rt: Runtime, actor: string) {
       [p.customer_id],
     ),
   ]);
+  const g=await googleConfig(await googleDB(rt,tenant,oa));
+  const sheetWrites=await all(ts,"SELECT source_id,state,error,updated_at,json_extract(row_json,'$[1]') title FROM demo_sheet_writes WHERE user_id=? ORDER BY updated_at DESC LIMIT 10",[actor]);
+  const live=await one(rt.db,"SELECT last_sync_at,error FROM gs_demo_live_state WHERE id=?",[tenant+':'+oa]);
   return {
+    sheetWrites,live,
+    spreadsheetUrl:g.settings.spreadsheetId?'https://docs.google.com/spreadsheets/d/'+g.settings.spreadsheetId+'/edit':null,
     started: true,
     tenant,
     oa,
@@ -490,6 +501,53 @@ const documentInput = z
     version: z.number().int().positive().optional(),
   })
   .strict();
+export async function copyDemoLibraryDocument(rt: Runtime, actor: string, fileId: string, expectedVersion?: number, copyId?: string) {
+  await participant(rt, actor, true);
+    const { tenant, oa } = config(rt),
+      ts = await rt.openDatabase(tenant, oa, "tsunagu");
+    let d = await one(
+      ts,
+      "SELECT * FROM meeting_inbox WHERE id=? AND state NOT IN ('ignored','missing')",
+      [fileId],
+    );
+    requireThat(d, 404, "NOT_FOUND", "議事録が見つかりません。");
+    requireThat(!expectedVersion || d.version === expectedVersion, 409, "DOCUMENT_CHANGED", "議事録が更新されています。最新版の通知から紐づけてください。");
+    const con = await one(
+      rt.db,
+      "SELECT * FROM connections WHERE id=? AND tenant_id=? AND oa_id=?",
+      [d.connection_id, tenant, oa],
+    );
+    requireThat(
+      con,
+      409,
+      "SOURCE_UNAVAILABLE",
+      "共通の議事録接続を確認できません。下の見本から体験できます。",
+    );
+    let body: string;
+    try {
+      body = await readMeetingText(rt, con, d);
+    } catch (e: any) {
+      if (e.code !== "DOCUMENT_CHANGED" || expectedVersion) throw e;
+      await pollDrive(rt, { tenant, oa });
+      d = await one(ts, "SELECT * FROM meeting_inbox WHERE id=?", [d.id]);
+      body = await readMeetingText(rt, con, d!);
+    }
+    const docId = copyId || "demo-note-" + id();
+    await rt.db.query(
+      "INSERT OR IGNORE INTO gs_demo_documents(id,user_id,title,body,held_at,updated_at) VALUES (?,?,?,?,?,?)",
+      [
+        docId,
+        actor,
+        d!.title,
+        body.slice(0, 20000),
+        d!.held_at || now(),
+        now(),
+      ],
+    );
+
+  return docId;
+}
+
 export function registerSelfDemo(app: Hono<AppEnv>) {
   const ctx = (c: any) => ({
     rt: c.env.runtime as Runtime,
@@ -547,6 +605,8 @@ export function registerSelfDemo(app: Hono<AppEnv>) {
       "UPDATE staff_line_links SET notifications=? WHERE tenant_id=? AND user_id=? AND state='active'",
       [Number(b.enabled), p.tenant_id, actor],
     );
+    await demoLiveState(rt);
+    await notifyDemoMeetings(rt, actor);
     await notifyAssistant(rt, p.tenant_id, config(rt).oa, actor);
     return c.json({ ok: true, expiresAt: expires });
   });
@@ -566,46 +626,8 @@ export function registerSelfDemo(app: Hono<AppEnv>) {
     const { rt, actor } = ctx(c);
     await participant(rt, actor, true);
     await slots(rt, actor, "copy", 6);
-    const { tenant, oa } = config(rt),
-      ts = await rt.openDatabase(tenant, oa, "tsunagu");
-    let d = await one(
-      ts,
-      "SELECT * FROM meeting_inbox WHERE id=? AND state NOT IN ('ignored','missing')",
-      [c.req.param("id")],
-    );
-    requireThat(d, 404, "NOT_FOUND", "議事録が見つかりません。");
-    const con = await one(
-      rt.db,
-      "SELECT * FROM connections WHERE id=? AND tenant_id=? AND oa_id=?",
-      [d.connection_id, tenant, oa],
-    );
-    requireThat(
-      con,
-      409,
-      "SOURCE_UNAVAILABLE",
-      "共通の議事録接続を確認できません。下の見本から体験できます。",
-    );
-    let body: string;
-    try {
-      body = await readMeetingText(rt, con, d);
-    } catch (e: any) {
-      if (e.code !== "DOCUMENT_CHANGED") throw e;
-      await pollDrive(rt, { tenant, oa });
-      d = await one(ts, "SELECT * FROM meeting_inbox WHERE id=?", [d.id]);
-      body = await readMeetingText(rt, con, d!);
-    }
-    const docId = "demo-note-" + id();
-    await rt.db.query(
-      "INSERT INTO gs_demo_documents(id,user_id,title,body,held_at,updated_at) VALUES (?,?,?,?,?,?)",
-      [
-        docId,
-        actor,
-        d!.title,
-        body.slice(0, 20000),
-        d!.held_at || now(),
-        now(),
-      ],
-    );
+    const docId = await copyDemoLibraryDocument(rt, actor, c.req.param("id"));
+    await notifyDemoMeetings(rt, actor);
     return c.json({ ok: true, id: docId });
   });
   app.post("/api/demo/documents", async (c) => {
@@ -618,6 +640,7 @@ export function registerSelfDemo(app: Hono<AppEnv>) {
       "INSERT INTO gs_demo_documents(id,user_id,title,body,held_at,updated_at) VALUES (?,?,?,?,?,?)",
       [docId, actor, b.title, b.body, b.heldAt, now()],
     );
+    await notifyDemoMeetings(rt, actor);
     return c.json({ ok: true, id: docId });
   });
   app.put("/api/demo/documents/:id", async (c) => {
@@ -649,6 +672,7 @@ export function registerSelfDemo(app: Hono<AppEnv>) {
       "議事録の更新を解析中です。",
     );
     await processDemoDocument(rt, actor, c.req.param("id"));
+    await notifyDemoMeetings(rt, actor);
     return c.json({ ok: true });
   });
   app.post("/api/demo/documents/:id/link", async (c) => {
@@ -669,7 +693,24 @@ export function registerSelfDemo(app: Hono<AppEnv>) {
       "この議事録は解析済み・解析中、または更新されています。",
     );
     await processDemoDocument(rt, actor, c.req.param("id"));
+    await notifyDemoMeetings(rt, actor);
     return c.json({ ok: true });
+  });
+  app.post("/api/demo/properties/:id/retry",async c=>{
+    const {rt,actor}=ctx(c),p=await participant(rt,actor,true),{tenant,oa}=config(rt);
+    const ts=await googleDB(rt,tenant,oa),g=await googleConfig(ts);
+    const job=await one(ts,"SELECT * FROM demo_sheet_writes WHERE source_id=? AND user_id=? AND customer_id=?",[c.req.param('id'),actor,p.customer_id]);
+    requireThat(job && ['error','uncertain'].includes(job.state) && job.spreadsheet_id===g.settings.spreadsheetId,409,'SHEET_REVIEW','保存先または台帳側の変更を確認してください。');
+    await ts.query("UPDATE demo_sheet_writes SET state=CASE WHEN state='error' THEN 'queued' ELSE state END,attempts=0,next_at='',config_version=? WHERE source_id=? AND state=? AND lease_id IS NULL",[g.version,job.source_id,job.state]);
+    await processDemoSheetWrites(rt,job.source_id);
+    await scanAssistant(rt,tenant,oa,actor,undefined,[p.customer_id],{generateDraft:true});
+    await notifyAssistant(rt,tenant,oa,actor);
+    return c.json({ok:true});
+  });
+  app.post("/api/demo/pulse",async c=>{
+    const {rt,actor}=ctx(c),p=await participant(rt,actor,true),{tenant,oa}=config(rt);
+    if(!p.notifications_until || p.notifications_until<=now()) return c.json({skipped:"inactive"});
+    return c.json(await runValueLoop(rt,tenant,oa));
   });
   app.post("/api/demo/properties", async (c) => {
     const { rt, actor } = ctx(c),
@@ -683,6 +724,7 @@ export function registerSelfDemo(app: Hono<AppEnv>) {
         layout: z.string().regex(/^[1-9][SLDK]+$/),
         walkingMinutes: z.number().int().min(0).max(60),
         status: z.enum(["available", "sold"]).default("available"),
+        requestId: z.string().uuid().optional(),
         sourceId: z
           .string()
           .regex(/^demo-property-[a-f0-9-]+$/)
@@ -692,7 +734,17 @@ export function registerSelfDemo(app: Hono<AppEnv>) {
       .strict()
       .parse(await c.req.json());
     const ts = await rt.openDatabase(tenant, oa, "tsunagu");
-    const sid = b.sourceId || "demo-property-" + id();
+    const sid = b.sourceId || "demo-property-" + (b.requestId || id());
+    const job=await queueDemoSheetWrite(rt,actor,p.customer_id,sid,b);
+    if(job) {
+      if(job.state!=="synced") await processDemoSheetWrites(rt,sid);
+      const saved=await one(ts,"SELECT state,error FROM demo_sheet_writes WHERE source_id=?",[sid]);
+      if(saved?.state==='synced') {
+        await scanAssistant(rt,tenant,oa,actor,undefined,[p.customer_id],{generateDraft:true});
+        await notifyAssistant(rt,tenant,oa,actor);
+      }
+      return c.json({ok:true,id:sid,sheet:saved});
+    }
     if (b.sourceId) {
       const old = await one(
         ts,

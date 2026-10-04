@@ -1,6 +1,6 @@
 import { demoStaffAllowed } from "./self-demo-access.ts";
 import type { Runtime } from "./runtime.ts";
-import type { Database } from "./db.ts";
+import { one, json, now, type Database } from "./db.ts";
 import { requireThat } from "./security.ts";
 import { customerTestDelivery } from "./customer-test-delivery.ts";
 
@@ -156,6 +156,17 @@ export function isolatedIntegrationRuntime(
           u.pathname.startsWith("/v4/spreadsheets/")) ||
         (u.origin === "https://openidconnect.googleapis.com" &&
           u.pathname === "/v1/userinfo"));
+    let googleSheetWrite = false;
+    if(scope.allowGoogle && scope.selfDemo && u.origin==='https://sheets.googleapis.com' && ['POST','PUT'].includes(method)) {
+      const match=u.pathname.match(/^\/v4\/spreadsheets\/([\w-]+)\/values\/(.+)$/);
+      const range=match ? decodeURIComponent(match[2]) : '';
+      const allowedRange=method==='POST' ? range==="'物件台帳'!A1:R1001:append" && u.searchParams.get('insertDataOption')==='INSERT_ROWS' : /^'物件台帳'!A([2-9]|[1-9][0-9]{1,2}|100[01]):R\1$/.test(range);
+      const body=await request.clone().json().catch(()=>null) as any;
+      if(match && allowedRange && u.searchParams.get('valueInputOption')==='RAW' && body?.majorDimension==='ROWS' && body.values?.length===1 && body.values[0]?.length===18) {
+        const row=body.values[0];
+        googleSheetWrite=!!await one(scope.tsunagu,"SELECT j.source_id FROM demo_sheet_writes j JOIN assistant_google_config c ON c.id='default' AND c.version=j.config_version WHERE j.spreadsheet_id=? AND json_extract(c.data,'$.spreadsheetId')=? AND j.source_id=? AND j.row_json=? AND j.state='sending' AND j.lease_until>?",[match[1],match[1],String(row[0]),json(row),now()]);
+      }
+    }
     const googleToken =
       scope.allowGoogle &&
       method === "POST" &&
@@ -210,6 +221,7 @@ export function isolatedIntegrationRuntime(
       !u.username &&
         !u.password &&
         (googleRead ||
+          googleSheetWrite ||
           googleToken ||
           archive ||
           researchRead ||

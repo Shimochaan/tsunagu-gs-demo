@@ -1,3 +1,4 @@
+import { demoLivePlatformDDL, demoLiveTsunaguDDL } from "./demo-live-schema.ts";
 import { selfDemoDDL } from "./self-demo-access.ts";
 import { calendarDDL,calendarStateDDL } from "./calendar.ts";
 import { meetingAutoDDL } from "./meeting-auto-schema.ts";
@@ -25,6 +26,7 @@ import {
 } from "./meeting-schema.ts";
 // 物理DBの境界を保つ。別DBへの参照はIDで結び、SQLの外部キーとは扱わない。
 export const platformSchema = [
+  ...demoLivePlatformDDL,
   ...selfDemoDDL,
   ...customerTestDDL,
   newsOAuthDDL,
@@ -72,6 +74,7 @@ export const harnessSchema = [
   `CREATE INDEX IF NOT EXISTS outbox_state_idx ON outbox(state,scheduled_at)`,
 ];
 export const tsunaguSchema = [
+  ...demoLiveTsunaguDDL,
   ...learningDDL,
   ...customerRecordingDDL,
   ...meetingAutoDDL,

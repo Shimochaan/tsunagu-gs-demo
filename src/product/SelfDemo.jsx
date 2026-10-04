@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import QRCode from "qrcode";
 import { api } from "./api.js";
 import { B, Brand } from "../platform/ui.jsx";
@@ -488,27 +488,29 @@ export function SelfDemo({ me }) {
     [body, setBody] = useState(sample),
     [title, setTitle] = useState("【体験用】希望条件の初回面談"),
     [openAll, setOpenAll] = useState(false);
+  const propertyRequest = useRef(null);
   const load = async () => {
     const d = await api("/api/demo");
     setData(d);
     return d;
   };
   useEffect(() => {
-    let alive = true;
+    let alive = true, pulsing = false;
     const poll = () => {
-      if (document.visibilityState === "visible")
-        api("/api/demo")
-          .then((d) => alive && setData(d))
-          .catch((e) => alive && setError(e.message));
+      if (document.visibilityState !== "visible") return;
+      api("/api/demo").then(d=>{
+        if (!alive) return;
+        setData(d);
+        if(d.customer && d.notificationsUntil>new Date().toISOString() && !pulsing) {
+          pulsing=true;
+          api("/api/demo/pulse",{}).catch(()=>{}).finally(()=>{pulsing=false;});
+        }
+      }).catch(e=>alive && setError(e.message));
     };
     poll();
     const timer = setInterval(poll, 10000);
     window.addEventListener("focus", poll);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-      window.removeEventListener("focus", poll);
-    };
+    return () => {alive=false;clearInterval(timer);window.removeEventListener("focus",poll);};
   }, []);
   const run = async (fn, message = "処理しています…") => {
     if (busy) return;
@@ -663,11 +665,11 @@ export function SelfDemo({ me }) {
               <>
                 <Step
                   n="4"
-                  title="議事録を自分のお客様に紐付ける"
+                  title="新しい議事録をLINEで紐付ける"
                   done={data.documents.some((d) => d.state === "ready")}
                 >
                   <p>
-                    実際に解析する共通の議事録を選ぶか、その場でメモを追加できます。名前が異なる共通素材も、体験用としてあなた自身に紐付けます。
+                    まず下の見本で議事録を追加してください。通知用LINEに届く「このお客様に紐づける」を押すと、希望条件が解析され、この画面に自動反映されます。共通の議事録を選んでも体験できます。
                   </p>
                   <button
                     className="demo-button secondary"
@@ -765,8 +767,10 @@ export function SelfDemo({ me }) {
                   done={data.proposals.length > 0}
                 >
                   <p>
-                    共通の商品マスターを自動で照合します。下のフォームから自分の体験用物件も追加できます。希望条件に合うと文案が自動生成され、通知用LINEに届きます。
+                    フォームから追加した物件は共通のスプレッドシートにも保存されます。このフォームの物件は自分のお客様向けです。シートへ直接追加した新しい行は全体の希望条件と照合されます。合う物件があれば、文案が自動生成されて通知用LINEに届きます。
                   </p>
+                  {data.spreadsheetUrl && <p><a href={data.spreadsheetUrl} target="_blank" rel="noreferrer">接続中の物件台帳を開く ↗</a></p>}
+                  {data.sheetWrites?.map(w=><p key={w.source_id} className={w.state==='synced'?'demo-success':'demo-muted'} role="status">{w.title}：{({synced:'スプレッドシートに保存済み',queued:'台帳への保存待ち',sending:'台帳に保存中',uncertain:'保存結果を確認中',conflict:'台帳側の変更を確認してください',error:'台帳への保存を完了できませんでした'})[w.state]}{w.error && ' · '+w.error}{['error','uncertain'].includes(w.state) && <button className="demo-link" onClick={()=>run(async()=>{await api('/api/demo/properties/'+w.source_id+'/retry',{});await load();})}>{w.state==='error'?'保存を再試行する':'保存結果を確認する'}</button>}</p>)}
                   <details>
                     <summary>
                       共通・自分用の物件を見る（
@@ -832,14 +836,18 @@ export function SelfDemo({ me }) {
                         const v = Object.fromEntries(
                           new FormData(e.currentTarget),
                         );
+                        const key=JSON.stringify(v);
+                        if(propertyRequest.current?.key!==key) propertyRequest.current={key,id:crypto.randomUUID()};
                         run(async () => {
-                          await api("/api/demo/properties", {
+                          const saved=await api("/api/demo/properties", {
+                            requestId:propertyRequest.current.id,
                             ...v,
                             price: Number(v.price) * 10000,
                             walkingMinutes: Number(v.walkingMinutes),
                           });
+                          if(!saved.sheet || saved.sheet.state==="synced") propertyRequest.current=null;
                           await load();
-                        }, "物件情報を照合し、条件が合えば追客文を作っています。");
+                        }, "スプレッドシートへ保存し、条件が合えば追客文を作っています。");
                       }}
                     >
                       <label>
@@ -893,7 +901,9 @@ export function SelfDemo({ me }) {
                   </details>
                   {!data.proposals.length && (
                     <p className="demo-muted">
-                      議事録の解析後、物件のエリア・予算・間取りを確認します。不一致の場合は文案を作りません。共通ファイルの変更は通常5分以内に検知します。
+                      {data.live?.last_sync_at && <>最終確認：{fmt(data.live.last_sync_at)}。 </>}
+                      {data.live?.error && <>一部の自動処理を再試行中です。 </>}
+                      議事録の解析後、物件のエリア・予算・間取りを確認します。不一致の場合は文案を作りません。通知が有効な体験中は約30〜60秒間隔で共通ファイルの変更を確認します。AI解析・文案の検証には追加で時間がかかる場合があります。
                     </p>
                   )}
                 </Step>

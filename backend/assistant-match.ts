@@ -68,3 +68,11 @@ export async function sourceContentHash(source: Row) {
     }),
   );
 }
+
+// Match identity excludes note IDs, timestamps and audit fields. Those still
+// version approval evidence, but a new note alone is not a new property offer.
+export function wishContentKey(wish: Row) {
+  return json({area:normalizeTag(wish.area),maxPrice:wish.maxPrice,
+    required:[...new Set((wish.required || []).map(normalizeTag))].sort(),
+    excluded:[...new Set((wish.excluded || []).map(normalizeTag))].sort()});
+}
