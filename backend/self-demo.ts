@@ -564,6 +564,13 @@ export function registerSelfDemo(app: Hono<AppEnv>) {
     await startDemo(c.env.runtime, c.get("principal").user);
     return c.json({ ok: true });
   });
+  app.post('/api/demo/showcase/send',async c=>{
+    const {rt,actor}=ctx(c);
+    await participant(rt,actor,true);
+    const input=z.object({requestId:z.uuid(),text:z.string().trim().min(1).max(2000)}).strict().parse(await c.req.json());
+    requireThat(rt.customerTestDelivery?.sendShowcaseDraft,409,'DEMO_SEND_DISABLED','実LINE送信は停止中です。');
+    return c.json(await rt.customerTestDelivery.sendShowcaseDraft(rt,actor,input.requestId,input.text));
+  });
   app.post("/api/demo/customer/pair", async (c) => {
     const { rt, actor } = ctx(c),
       p = await participant(rt, actor);

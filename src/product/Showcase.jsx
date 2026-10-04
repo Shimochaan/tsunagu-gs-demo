@@ -8,7 +8,7 @@ import {
 export function ShowcaseBanner({ path, go }) {
   const screen = showcaseScreens.find((x) => x[1] === path);
   return (
-    <aside className="showcase-banner" aria-label="画面見学の案内">
+    <aside className="showcase-banner" aria-label="操作デモの案内">
       <div>
         <Tag>公開デモ · 架空データ</Tag>
         <strong>
@@ -17,11 +17,11 @@ export function ShowcaseBanner({ path, go }) {
       </div>
       <p>
         {screen?.[3] ||
-          "運営・企業管理・営業の実際の画面を、共通アカウントで見学できます。"}{" "}
+          "運営・企業管理・営業の実際の画面を、共通アカウントで操作できます。"}{" "}
         {screen?.[4]}
       </p>
       <small>
-        閲覧・画面内の切り替えができます。保存・送信・外部接続は停止しています。
+        編集・保存・承認を試せます。変更はこのログイン専用です。再ログインすると新しい見本から始まります。
       </small>
       <div className="showcase-links">
         <B variant="ghost" onClick={() => go("/tour")}>
@@ -39,18 +39,18 @@ export function ShowcaseGuide({ go }) {
     <>
       <Title
         eyebrow="PRODUCT TOUR"
-        title="つなぐの全体を、見て歩く。"
+        title="つなぐの全体を、動かしてみる。"
         description="同じ製品を、営業・企業管理者・運営の3つの視点から。まず「今日の提案」、次に「導入・企業設定」、最後に「運営ホーム」の順がおすすめです。"
       />
       <div className="showcase-entry-grid">
         {[
-          ["/sales", "営業の毎日を見る", "情報の変化から、次のご連絡へ。"],
+          ["/sales", "営業の毎日を試す", "情報の変化から、次のご連絡へ。"],
           [
             "/onboarding",
-            "企業の導入を見る",
+            "企業の導入を試す",
             "公式LINE・情報元・営業担当をつなぐ。",
           ],
-          ["/ops", "運営の仕事を見る", "受注から開通、日々の支援まで。"],
+          ["/ops", "運営の仕事を試す", "受注から開通、日々の支援まで。"],
         ].map(([url, title, desc]) => (
           <button className="showcase-entry" key={url} onClick={() => go(url)}>
             <strong>{title} →</strong>
@@ -101,12 +101,12 @@ export function ShowcaseGuide({ go }) {
           このログインでは画面を比較するため、架空企業の複数の役割をまとめています。本運用では担当者に必要な権限だけを付与し、運営が顧客の会話を自由に閲覧する設定にはしません。
         </Note>
       </Section>
-      <Section title="実際に試せること・画面で確認すること">
+      <Section title="操作デモと実機体験の使い方">
         <p>
-          Googleログインの実機デモでは、自分のLINEへの提案・編集・承認・送信、議事録と物件の追加、TimeRex予約を試せます。こちらの全画面見学では、実送信やAIの呼び出しは行いません。
+          Googleログインの実機デモでは、自分のLINEへの提案・編集・承認・送信、議事録と物件の追加、TimeRex予約を試せます。こちらでは企業追加・設定・顧客・物件・文案を編集できます。文案の「承認して自分のLINEで試す」から、編集した文面を実機デモへ引き継いで送信できます。
         </p>
         <p>
-          リサーチ・カレンダー・PDF/Excel取り込みなどの設定画面も閲覧できます。設定画面の表示は、すべての外部接続・課金・請求処理の実機検証完了を意味しません。
+          招待先を demo@example.com にすると「招待の受諾」から参加を試せます。招待メールは送らず、企業の基盤準備はこのデモ内で再現します。Google・LINEなどの外部接続とAI生成は、本人確認を行う実機デモで試してください。リサーチ・カレンダー・PDF/Excel取り込みなどの設定画面も確認できます。設定画面の表示は、すべての外部接続・課金・請求処理の実機検証完了を意味しません。
         </p>
         <a href={liveDemoURL} target="_blank" rel="noreferrer">
           Googleでログインして、自分のLINEで体験する ↗

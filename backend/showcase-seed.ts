@@ -4,7 +4,7 @@ import {
   SHOWCASE_TENANT as t,
   SHOWCASE_OA as oa,
   SHOWCASE_USER as u,
-} from "./showcase.ts";
+} from "./showcase-constants.ts";
 export function showcaseSeed(authDDL: string[], at = new Date()) {
   const stamp = at.toISOString(),
     past = new Date(+at - 86400000).toISOString(),
@@ -44,13 +44,13 @@ export function showcaseSeed(authDDL: string[], at = new Date()) {
   });
   add("platform", "tenants", {
     id: t,
-    name: "つなぐ不動産（架空の見学企業）",
+    name: "つなぐ不動産（架空の体験企業）",
     industry: "不動産",
     unit: "company",
     method: "agency",
     product: "harness",
     state: "active",
-    plan_name: "画面見学用サンプル",
+    plan_name: "操作デモ用サンプル",
     monthly_fee: 30000,
     settings: json({ retentionDays: null, shareTeam: true }),
     created_at: past,
@@ -338,9 +338,9 @@ export function showcaseSeed(authDDL: string[], at = new Date()) {
       summary: source.summary,
       source,
       preferences: prefs,
-      draftMode: "generated",
+      draftMode: "template",
       draftDetail:
-        "画面見学のために用意した文案です。実際のAI生成・送信は行いません。",
+        "編集・承認を試すための見本文案です。AI生成は実機デモで体験できます。",
       messages: [],
       priority: 30,
     }),

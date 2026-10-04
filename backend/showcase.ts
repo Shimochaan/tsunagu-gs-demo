@@ -1,13 +1,14 @@
 import type { Runtime } from "./runtime.ts";
 import { createApp } from "./app.ts";
-export const SHOWCASE_TENANT = "showcase-company";
-export const SHOWCASE_OA = "showcase-sales";
-export const SHOWCASE_USER = "showcase-viewer";
+import { runPending } from "./jobs.ts";
+export {
+  SHOWCASE_TENANT,
+  SHOWCASE_OA,
+  SHOWCASE_USER,
+} from "./showcase-constants.ts";
 export const SHOWCASE_MESSAGE =
-  "画面見学用のため保存・送信はできません。実際のLINE体験は案内の「自分のLINEで体験」から進んでください。";
+  "外部サービスの接続は実機体験で行ってください。架空データの編集・保存はこの画面で試せます。";
 const app = createApp();
-// Fail closed for every mutation, even future routes; only the isolated login/logout
-// and a membership-checked workspace selection may change the visitor's session.
 export async function showcaseFetch(request: Request, runtime: Runtime) {
   const path = new URL(request.url).pathname;
   const read = ["GET", "HEAD"].includes(request.method);
@@ -15,23 +16,27 @@ export async function showcaseFetch(request: Request, runtime: Runtime) {
     (request.method === "POST" &&
       ["/api/auth/sign-in/demo", "/api/auth/sign-out"].includes(path)) ||
     (read && path === "/api/auth/get-session");
-  const sessionSelect =
-    request.method === "POST" && path === "/api/session/tenant";
   if (
     path.startsWith("/webhooks/") ||
     (path.startsWith("/api/auth/") && !authAllowed)
   )
     return Response.json(
-      {
-        error: "NOT_FOUND",
-        message: "公開見学用のログインを利用してください。",
-      },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { error: "NOT_FOUND", message: "公開デモのログインを利用してください。" },
+      { status: 404 },
     );
-  if (!read && !authAllowed && !sessionSelect)
+  // Public demo credentials cannot be converted into an operator MFA credential or
+  // another real external account. All business data lives in the visitor's own DBs.
+  if (!read && path.startsWith("/api/security/"))
     return Response.json(
-      { error: "SHOWCASE_READ_ONLY", message: SHOWCASE_MESSAGE },
-      { status: 403, headers: { "Cache-Control": "no-store" } },
+      {
+        error: "SHOWCASE_SECURITY",
+        message:
+          "公開デモでは認証設定を変更できません。企業設定・文案などの操作を試してください。",
+      },
+      { status: 403 },
     );
-  return app.fetch(request, { runtime });
+  const response = await app.fetch(request, { runtime });
+  if (!read && response.ok && !path.startsWith("/api/auth/"))
+    await runPending(runtime);
+  return response;
 }

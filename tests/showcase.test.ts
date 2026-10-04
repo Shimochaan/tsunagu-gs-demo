@@ -8,6 +8,7 @@ import {
   SHOWCASE_TENANT,
   SHOWCASE_OA,
 } from "../backend/showcase.ts";
+import { prepareShowcaseSample } from "../backend/showcase-prepare.ts";
 import { showcaseSeed } from "../backend/showcase-seed.ts";
 import type { Runtime } from "../backend/runtime.ts";
 const origin = "http://localhost:4219",
@@ -64,6 +65,7 @@ async function fixture() {
       return p === "tsunagu" ? stores.studio : stores[p];
     },
   };
+  await prepareShowcaseSample(rt);
   let cookie = "";
   const call = async (
     path: string,
@@ -104,7 +106,7 @@ async function fixture() {
     close: () => Object.values(stores).forEach((s) => s.close()),
   };
 }
-test("public showcase logs into real product screens, blocks writes and external I/O", async () => {
+test("public showcase logs into real product screens, supports edits and approval while leaving external I/O to the self demo", async () => {
   const f = await fixture();
   try {
     assert.equal((await f.call("/api/me")).status, 401);
@@ -161,20 +163,16 @@ test("public showcase logs into real product screens, blocks writes and external
       const r = await f.call(route);
       assert.equal(r.status, 200, route + " " + (await r.clone().text()));
     }
-    for (const route of [
-      "/api/ops/tenants",
-      base + "/settings",
-      oa + "/proposals",
-      oa + "/assistant/scan",
-      oa + "/assistant/proposals/showcase-proposal/approve",
-      oa + "/connectors/drive/authorize",
-      "/future-mutating-endpoint",
-    ])
-      for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
-        const r = await f.call(route, {}, method);
-        assert.equal(r.status, 403, route);
-        assert.equal(((await r.json()) as any).error, "SHOWCASE_READ_ONLY");
-      }
+    const detail=await (await f.call(oa+'/assistant/proposals/showcase-proposal')).json() as any;
+    assert.equal(detail.proposal.problem,null);
+    const edited=await f.call(oa+'/assistant/proposals/showcase-proposal',{version:1,draft:'佐藤様、条件に合う物件が出ました。ご確認ください。',learning:{category:'style',note:''}},'PATCH');
+    assert.equal(edited.status,200,await edited.clone().text());
+    const approved=await f.call(oa+'/assistant/proposals/showcase-proposal/approve',{version:2});
+    assert.equal(approved.status,200,await approved.clone().text());
+    assert.equal((await approved.json() as any).queued,false);
+    assert.equal((await f.stores.harness.query('SELECT * FROM outbox')).rows.length,0);
+    assert.equal((await f.stores.studio.query("SELECT state FROM proposals WHERE id='showcase-proposal'")).rows[0].state,'approved');
+    assert.equal((await f.call('/api/security/totp/setup',{})).status,403);
     assert.equal(
       (await f.call("/api/auth/sign-in/social", { provider: "google" })).status,
       404,

@@ -28,6 +28,7 @@ export interface CustomerTestDelivery {
     bookingId: string,
     version: number,
   ): Promise<void>;
+  sendShowcaseDraft?(rt:Runtime,actor:string,requestId:string,text:string):Promise<{state:'accepted'}>;
   verify(rt: Runtime, tenant: string, oa: string, actor: string): Promise<void>;
   send(
     rt: Runtime,
@@ -121,6 +122,39 @@ export function customerTestDelivery(
         (!!rt &&
           !!config.selfDemo &&
           demoCustomerAllowed(rt, line, actor, customer))),
+    async sendShowcaseDraft(rt,actor,requestId,text){
+      requireThat(enabled && config.selfDemo && rt.selfDemo,403,'DEMO_SEND_DISABLED','実LINE送信は停止中です。');
+      requireThat(/^[0-9a-f-]{36}$/i.test(requestId) && text.trim().length>0 && text.length<=2000,400,'INVALID_DRAFT','文面は1〜2,000文字で入力してください。');
+      const p=await demoParticipant(rt,actor);
+      requireThat(p?.state==='active' && await demoCustomerAllowed(rt,p.customer_line_id,actor,p.customer_id),409,'DEMO_LINE_REQUIRED','顧客用LINEの本人確認を完了してください。');
+      scope(p.tenant_id,config.oa);
+      const accountRow=await account(rt,p.tenant_id,config.oa);
+      requireThat(accountRow.state==='ready',409,'DEMO_LINE_NOT_READY','顧客用LINEが未接続です。');
+      const attemptId=`showcase:${actor}:${requestId}`,bodyHash=await digest(text);
+      const previous=await one(rt.db,'SELECT state,body_hash,line_user_id FROM gs_customer_line_attempts WHERE id=?',[attemptId]);
+      if(previous){
+        requireThat(previous.body_hash===bodyHash && previous.line_user_id===p.customer_line_id,409,'DRAFT_CHANGED','送信確認後に文面または本人連携が変わっています。');
+        requireThat(previous.state==='accepted',409,'DEMO_SEND_UNCERTAIN','送信中、または送信結果が未確認です。重複を防ぐため再送しません。LINEのトークを確認してください。');
+        return {state:'accepted'};
+      }
+      const cred=await getCredential(rt,p.tenant_id,config.oa,'harness');
+      const friend=await harnessRequest(rt,cred,'/api/friends/'+encodeURIComponent(p.friend_id));
+      requireThat(friend.isFollowing && friend.lineUserId===p.customer_line_id,409,'DEMO_UNFOLLOWED','顧客用LINEを友だち追加してください。');
+      await bot();
+      const common=await rt.openDatabase(p.tenant_id,'','common');
+      const customer=await one(common,"SELECT c.opt_out FROM customers c JOIN customer_links l ON l.customer_id=c.id WHERE c.id=? AND c.owner_user_id=? AND l.oa_id=? AND l.line_user_id=? AND l.state='confirmed'",[p.customer_id,actor,config.oa,p.customer_line_id]);
+      requireThat(customer && !customer.opt_out && await demoCustomerAllowed(rt,p.customer_line_id,actor,p.customer_id),409,'DEMO_LINK_CHANGED','本人連携・配信設定が変わっています。');
+      const at=now(),day=dayJST(),retryKey=crypto.randomUUID();
+      const claim=await rt.db.query("INSERT OR IGNORE INTO gs_customer_line_attempts(id,tenant_id,oa_id,line_user_id,body_hash,retry_key,day,state,created_at) SELECT ?,?,?,?,?,?,?,'sending',? WHERE (SELECT COUNT(*) FROM gs_customer_line_attempts WHERE tenant_id=? AND oa_id=? AND day=? AND line_user_id=?)<8 AND (SELECT COUNT(*) FROM gs_customer_line_attempts WHERE tenant_id=? AND oa_id=? AND day=?)<240",[attemptId,p.tenant_id,config.oa,p.customer_line_id,bodyHash,retryKey,day,at,p.tenant_id,config.oa,day,p.customer_line_id,p.tenant_id,config.oa,day]);
+      requireThat(claim.changes,409,'DEMO_SEND_LIMIT','送信中、または本日の送信上限（本人宛8通）です。');
+      try{
+        const response=await transport('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:`Bearer ${config.token}`,'Content-Type':'application/json','X-Line-Retry-Key':retryKey},body:json({to:p.customer_line_id,messages:[{type:'text',text}]}),redirect:'manual',signal:AbortSignal.timeout(15000)});
+        requireThat(response.ok || response.status===409 && !!response.headers.get('x-line-accepted-request-id'),502,'DEMO_SEND_UNKNOWN','送信結果を確認できません。LINEのトークを確認してください。重複を防ぐため再送しません。');
+        await rt.db.query("UPDATE gs_customer_line_attempts SET state='accepted' WHERE id=?",[attemptId]);
+      }catch(error){await rt.db.query("UPDATE gs_customer_line_attempts SET state='uncertain' WHERE id=?",[attemptId]);throw error;}
+      await audit(rt.db,actor,'demo.showcase.sent',requestId,p.tenant_id,{characters:text.length});
+      return {state:'accepted'};
+    },
     async sendDemoBooking(rt, actor, bookingId, version) {
       requireThat(
         enabled && config.selfDemo && rt.selfDemo,

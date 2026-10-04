@@ -19,7 +19,7 @@ export function Login({ reload, config }) {
     [step, setStep] = useState("email"),
     [sent, setSent] = useState(false);
 
-  if (config?.showcase) return <main className="product-centered"><Brand/><Tag>公開デモ · 全画面見学</Tag><Title title="営業も、企業管理も、運営も。" description="つなぐの実際の画面を、架空データで見学できます。保存・送信・外部接続は停止しています。"/><Form button="画面見学にログイン" onSubmit={async v=>{await api("/api/auth/sign-in/demo",{email:v.email.trim().toLowerCase()});await reload();}}><Field label="見学用メールアドレス"><input name="email" type="email" required defaultValue="demo@example.com" autoComplete="off"/></Field></Form><p>公開見学用のため、パスワード・メール確認コードは不要です。個人のメールアドレスは入力しないでください。</p><a href="https://tsunagu-gs-integration.shimoryo.workers.dev/demo">Googleログインで、自分のLINEへ送る体験はこちら →</a></main>;
+  if (config?.showcase) return <main className="product-centered"><Brand/><Tag>公開デモ · 全画面操作</Tag><Title title="営業も、企業管理も、運営も。" description="つなぐの実際の画面を、架空データで操作できます。企業・物件・文案を編集し、文案は実機デモへ引き継いで自分のLINEに送れます。"/><Form button="操作デモにログイン" onSubmit={async v=>{await api("/api/auth/sign-in/demo",{email:v.email.trim().toLowerCase()});await reload();}}><Field label="デモ用メールアドレス"><input name="email" type="email" required defaultValue="demo@example.com" autoComplete="off"/></Field></Form><p>公開デモ用のため、パスワード・メール確認コードは不要です。個人のメールアドレスは入力しないでください。</p><a href="https://tsunagu-gs-integration.shimoryo.workers.dev/demo">Googleログインで、自分のLINEへ送る体験はこちら →</a></main>;
   return (
     <main className="pt-auth-stage">
       <section className="pt-auth-visual">
@@ -167,7 +167,7 @@ export function Login({ reload, config }) {
               ローカル検証環境です。メールは外部送信されず、開発者用のローカル受信箱に保存されます。
             </Note>
           )}
-          {config?.selfDemo && <p><a href={showcaseURL+"/login"} target="_blank" rel="noreferrer">管理・営業・運営の全画面を見学（demo@example.com） ↗</a></p>}
+          {config?.selfDemo && <p><a href={showcaseURL+"/login"} target="_blank" rel="noreferrer">管理・営業・運営の全画面を操作（demo@example.com） ↗</a></p>}
           <p className="product-auth-note">
             <I name="LockKeyhole" size={14} />
             {config?.selfDemo ? "Googleの基本情報のみ使用します。自分のLINE宛てに体験できます。" : "所属企業と役割に応じた画面へ進みます。"}

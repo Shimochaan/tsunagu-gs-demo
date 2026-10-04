@@ -1007,7 +1007,7 @@ export async function approveAssistant(
     "保留・取消済みです。最新の提案を確認してください。",
   );
   requireThat(
-    access.oa.state === "ready" && (await deliveryReady(rt, tenant, oa)),
+    access.oa.state === "ready" && (rt.showcase && !rt.deliveryEnabled || await deliveryReady(rt, tenant, oa)),
     409,
     "DELIVERY_NOT_CONNECTED",
     "顧客向けHarness配送が未接続です。送信は予約されていません。",
@@ -1062,6 +1062,10 @@ export async function approveAssistant(
     "VERSION_CONFLICT",
     "提案が変更されています。",
   );
+  if(rt.showcase){
+    await audit(rt.db,actor,'assistant.approved',pid,tenant,{version,showcase:true});
+    return {ok:true,state:'approved',queued:false};
+  }
   await h.query(
     "INSERT OR IGNORE INTO outbox(id,customer_id,line_user_id,proposal_id,proposal_version,body,scheduled_at,retry_key) VALUES (?,?,?,?,?,?,?,?)",
     [

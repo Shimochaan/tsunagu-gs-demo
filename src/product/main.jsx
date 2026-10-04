@@ -12,6 +12,8 @@ import { Ops } from "./Ops.jsx";
 import { ShowcaseGuide,ShowcaseBanner } from "./Showcase.jsx";
 import { Onboarding, Profiles } from "./Onboarding.jsx";
 import { Sales } from "./Sales.jsx";
+import { captureShowcaseDraft,readShowcaseDraft } from './showcase-handoff.js';
+captureShowcaseDraft();
 function getInitialMe() {
   try {
     const raw = sessionStorage.getItem("tsunagu_session_user");
@@ -89,7 +91,7 @@ function Product() {
       await reload();
       sessionStorage.removeItem("assistant_return");
       go(review);
-    } else go(data?.home || "/login");
+    } else go(data?.selfDemo && readShowcaseDraft() ? '/demo' : data?.home || "/login");
   }, [go, reload]);
   useEffect(() => {
     reload();

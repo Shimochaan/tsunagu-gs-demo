@@ -1143,3 +1143,41 @@ test("self demo: property save alone repairs one invalid AI attempt and sends ex
     assert.equal((await one(f.h, "SELECT COUNT(*) n FROM outbox")).n, 0);
   } finally { await f.dispose(); }
 });
+
+test('showcase draft handoff sends only to authenticated tester; retries, recipient injection and revocation cannot send again',async()=>{
+ const f=await fixture();
+ try{
+  const p=await f.pair();
+  await f.rt.db.query("UPDATE accounts SET channel_id='123456',destination=? WHERE id='oa'",[destination]);
+  const pushes:any[]=[];
+  f.rt.customerTestDelivery=customerTestDelivery({tenant:'t',oa:'oa',enabled:true,selfDemo:true,channelId:'123456',destination,staffDestination,token:'fixture',lineUserIds:[]},async(input,init)=>{
+   if(String(input).endsWith('/info'))return Response.json({userId:destination});
+   pushes.push(JSON.parse(String(init?.body)));return Response.json({sentMessages:[{id:'fixture-message'}]});
+  });
+  const path='/api/demo/showcase/send',draft={requestId:crypto.randomUUID(),text:'操作デモで編集した架空の物件案内です。'};
+  assert.equal((await f.request(path,{...draft,to:'other-line'})).status,400);
+  assert.equal((await f.request(path,draft,'second')).status,403);
+  assert.equal((await f.request(path,draft)).status,200);
+  assert.deepEqual(pushes,[{to:line,messages:[{type:'text',text:draft.text}]}]);
+  assert.equal((await f.request(path,draft)).status,200);
+  assert.equal(pushes.length,1);
+  assert.equal((await f.request(path,{...draft,text:'差し替え'})).status,409);
+  await f.common.query('UPDATE customers SET opt_out=1 WHERE id=?',[p.customer_id]);
+  assert.equal((await f.request(path,{...draft,requestId:crypto.randomUUID()})).status,409);
+  assert.equal(pushes.length,1);
+  await f.rt.db.query("UPDATE gs_demo_participants SET state='ended' WHERE user_id='guest'");
+  assert.equal((await f.request(path,{...draft,requestId:crypto.randomUUID()})).status,403);
+ }finally{await f.dispose()}
+});
+test('showcase draft double-click is atomic and uncertain LINE response is not resent',async()=>{
+ const f=await fixture();
+ try{
+  await f.pair();await f.rt.db.query("UPDATE accounts SET channel_id='123456',destination=? WHERE id='oa'",[destination]);
+  let pushes=0;
+  f.rt.customerTestDelivery=customerTestDelivery({tenant:'t',oa:'oa',enabled:true,selfDemo:true,channelId:'123456',destination,staffDestination,token:'fixture',lineUserIds:[]},async input=>{if(String(input).endsWith('/info'))return Response.json({userId:destination});pushes++;throw Error('simulated connection loss');});
+  const draft={requestId:crypto.randomUUID(),text:'重複検証用'};
+  const results=await Promise.all([f.request('/api/demo/showcase/send',draft),f.request('/api/demo/showcase/send',draft)]);
+  assert.ok(results.every(r=>r.status>=400));assert.equal(pushes,1);
+  assert.equal((await f.request('/api/demo/showcase/send',draft)).status,409);assert.equal(pushes,1);
+ }finally{await f.dispose()}
+});

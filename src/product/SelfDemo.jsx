@@ -3,6 +3,23 @@ import QRCode from "qrcode";
 import { api } from "./api.js";
 import { B, Brand } from "../platform/ui.jsx";
 import "./self-demo.css";
+import { readShowcaseDraft,clearShowcaseDraft } from './showcase-handoff.js';
+
+function ShowcaseDraft({data,run}){
+ const [draft,setDraft]=useState(readShowcaseDraft),[sent,setSent]=useState(false);
+ if(!draft)return null;
+ return <section className="demo-step" aria-label="操作デモから引き継いだ文案">
+  <h2>操作デモで承認した文案を、自分のLINEへ</h2>
+  <p>Googleアカウントと本人確認済みの顧客用LINEを使って送信します。文中の氏名・物件は架空の見本です。</p>
+  <div className="product-draft">{draft.text}</div>
+  {sent ? <p role="status" className="demo-success">LINEへの送信を受け付けました。顧客用「G’s不動産」からのトークを確認してください。</p> : <>
+   <p>{data.customer ? `送信先：あなたのLINE（${data.customer.name}）。文面を確認してから送ってください。` : '下の①〜③で体験を開始し、顧客用LINEの本人確認を済ませると送信できます。文案はこのブラウザーに保持しています。'}</p>
+   <button className="demo-button" disabled={!data.customer || !!data.customer.opt_out || data.state!=='active'} onClick={()=>run(async()=>{await api('/api/demo/showcase/send',draft);setSent(true);clearShowcaseDraft();},'自分のLINEへ送信しています…')}>この文面を自分のLINEへ送信する</button>
+  </>}
+  <button className="demo-link" onClick={()=>{clearShowcaseDraft();setDraft(null);}}>文案を閉じる</button>
+  <p><a href="https://tsunagu-gs-showcase.shimoryo.workers.dev/sales">管理・営業・運営の操作デモに戻る →</a></p>
+ </section>;
+}
 
 const STAFF = "https://lin.ee/yV6rgH7",
   CUSTOMER = "https://line.me/R/ti/p/%40302klzlz";
@@ -542,7 +559,7 @@ export function SelfDemo({ me }) {
         <a href="/demo" className="demo-tag">
           G’s 提出用・実機体験
         </a>
-        <a className="demo-link" href="https://tsunagu-gs-showcase.shimoryo.workers.dev/login" target="_blank" rel="noreferrer">全画面見学・導入フロー ↗</a>
+        <a className="demo-link" href="https://tsunagu-gs-showcase.shimoryo.workers.dev/login" target="_blank" rel="noreferrer">全画面操作・導入フロー ↗</a>
         <button
           className="demo-link"
           onClick={() =>
@@ -585,6 +602,7 @@ export function SelfDemo({ me }) {
         </div>
       )}
       <fieldset disabled={!!busy} className="demo-fieldset">
+        <ShowcaseDraft data={data} run={run}/>
         <Step n="1" title="Googleでログイン" done>
           <p>
             {me.user.name} / {me.user.email}
