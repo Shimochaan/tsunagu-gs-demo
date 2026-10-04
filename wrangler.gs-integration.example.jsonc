@@ -1,0 +1,70 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tsunagu-gs-integration",
+  "main": "backend/gs-integration-worker.ts",
+  "compatibility_date": "2026-10-03",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "assets": {
+    "directory": "./build/public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "triggers": {
+    "crons": []
+  },
+  "observability": {
+    "enabled": false
+  },
+  "vars": {
+    "APP_ORIGIN": "https://OWNER_CONFIGURED_PRIVATE_ORIGIN.invalid",
+    "GS_TENANT_ID": "gs-integration",
+    "GS_OA_ID": "gs-sales",
+    "GS_ALLOW_GOOGLE": "false",
+    "GS_ALLOW_OPENAI": "false",
+    "GS_ALLOW_STAFF_LINE": "false",
+    "GS_ALLOW_CUSTOMER_DELIVERY": "false",
+    "GS_CUSTOMER_LINE_TEST_USERS_JSON": "[]",
+    "GS_STAFF_LINE_TEST_USERS_JSON": "[]",
+    "GS_ALLOW_NEWS_ARCHIVE": "false",
+    "ASSISTANT_RESEARCH_ENABLED": "false",
+    "ASSISTANT_NEWS_AUTHORIZATION_ENABLED": "false",
+    "DELIVERY_ENABLED": "false",
+    "ASSISTANT_LINE_ENABLED": "false",
+    "SLACK_PROPOSAL_NOTIFICATIONS": "false",
+    "PROVISIONING_ENABLED": "false",
+    "CREDENTIAL_KEY_VERSION": "v1",
+    "GS_RUNTIME_ENABLED": "false"
+  },
+  "d1_databases": [
+    {
+      "binding": "PLATFORM_DB",
+      "database_name": "tsunagu-gs-integration-platform",
+      "database_id": "OWNER_CREATE_DEDICATED_PLATFORM_DB",
+      "migrations_dir": "backend/migrations/platform"
+    },
+    {
+      "binding": "GS_COMMON_DB",
+      "database_name": "tsunagu-gs-integration-common",
+      "database_id": "OWNER_CREATE_DEDICATED_COMMON_DB",
+      "migrations_dir": "backend/migrations/common"
+    },
+    {
+      "binding": "GS_HARNESS_DB",
+      "database_name": "tsunagu-gs-integration-harness",
+      "database_id": "OWNER_CREATE_DEDICATED_HARNESS_DB",
+      "migrations_dir": "backend/migrations/harness"
+    },
+    {
+      "binding": "GS_STUDIO_DB",
+      "database_name": "tsunagu-gs-integration-studio",
+      "database_id": "OWNER_CREATE_DEDICATED_STUDIO_DB",
+      "migrations_dir": "backend/migrations/tsunagu"
+    }
+  ],
+  "preview_urls": false,
+  "routes": []
+}

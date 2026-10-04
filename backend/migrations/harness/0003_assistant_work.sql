@@ -1,0 +1,13 @@
+CREATE TABLE IF NOT EXISTS outbox_reconcile_queue (outbox_id TEXT PRIMARY KEY,revision INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS delivery_maintenance (id TEXT PRIMARY KEY);
+INSERT OR IGNORE INTO outbox_reconcile_queue(outbox_id) SELECT id FROM outbox WHERE state IN ('sent','uncertain') AND NOT EXISTS(SELECT 1 FROM delivery_maintenance WHERE id='reconcile-seed');
+INSERT OR IGNORE INTO delivery_maintenance(id) VALUES ('reconcile-seed');
+CREATE TRIGGER IF NOT EXISTS delivery_reconcile_insert AFTER INSERT ON outbox WHEN NEW.state IN ('sent','uncertain') BEGIN INSERT INTO outbox_reconcile_queue(outbox_id) VALUES (NEW.id) ON CONFLICT(outbox_id) DO UPDATE SET revision=revision+1; END;
+CREATE TRIGGER IF NOT EXISTS delivery_reconcile_update AFTER UPDATE OF state ON outbox WHEN NEW.state IN ('sent','uncertain') AND OLD.state<>NEW.state BEGIN INSERT INTO outbox_reconcile_queue(outbox_id) VALUES (NEW.id) ON CONFLICT(outbox_id) DO UPDATE SET revision=revision+1; END;
+CREATE TABLE IF NOT EXISTS assistant_message_changes (customer_id TEXT PRIMARY KEY,revision INTEGER NOT NULL DEFAULT 1);
+CREATE INDEX IF NOT EXISTS messages_customer_occurred ON messages(customer_id,occurred_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS events_pending ON events(state,occurred_at);
+CREATE INDEX IF NOT EXISTS outbox_proposal ON outbox(proposal_id,proposal_version);
+CREATE TRIGGER IF NOT EXISTS assistant_message_insert AFTER INSERT ON messages BEGIN INSERT INTO assistant_message_changes(customer_id) VALUES (NEW.customer_id) ON CONFLICT(customer_id) DO UPDATE SET revision=revision+1; END;
+CREATE TRIGGER IF NOT EXISTS assistant_message_update AFTER UPDATE ON messages BEGIN INSERT INTO assistant_message_changes(customer_id) VALUES (OLD.customer_id) ON CONFLICT(customer_id) DO UPDATE SET revision=revision+1; INSERT INTO assistant_message_changes(customer_id) VALUES (NEW.customer_id) ON CONFLICT(customer_id) DO UPDATE SET revision=revision+1; END;
+CREATE TRIGGER IF NOT EXISTS assistant_message_delete AFTER DELETE ON messages BEGIN INSERT INTO assistant_message_changes(customer_id) VALUES (OLD.customer_id) ON CONFLICT(customer_id) DO UPDATE SET revision=revision+1; END;

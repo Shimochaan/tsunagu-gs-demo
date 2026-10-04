@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS tenant_business (tenant_id TEXT PRIMARY KEY,industry TEXT NOT NULL,topics TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,updated_at TEXT NOT NULL);

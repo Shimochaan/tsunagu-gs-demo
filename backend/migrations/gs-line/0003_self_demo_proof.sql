@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS gs_demo_proofs (pair_hash TEXT PRIMARY KEY,line_user_id TEXT NOT NULL,friend_id TEXT NOT NULL,confirm_hash TEXT NOT NULL,state TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL);

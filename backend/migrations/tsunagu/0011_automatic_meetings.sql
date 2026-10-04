@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS meeting_auto_state (file_id TEXT PRIMARY KEY,modified_at TEXT NOT NULL,state TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',text_hash TEXT,note_id TEXT,attempts INTEGER NOT NULL DEFAULT 0,next_at TEXT NOT NULL DEFAULT '',lease_until TEXT,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS meeting_auto_bindings (file_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,actor_id TEXT NOT NULL,alias TEXT,enabled INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS calendar_items (id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,event_id TEXT NOT NULL,ical_uid TEXT,title TEXT NOT NULL,starts_at TEXT,ends_at TEXT,state TEXT NOT NULL,data TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL,seen_run TEXT,customer_id TEXT,appointment_id TEXT);
+CREATE INDEX IF NOT EXISTS calendar_items_connection ON calendar_items(connection_id,starts_at);
