@@ -128,7 +128,7 @@ function Product() {
       if (path !== "/login") go("/login");
       return;
     }
-    if (path === "/" || path === "/login") go(me.home);
+    if (path === "/" || path === "/login") go(me.selfDemo && readShowcaseDraft() ? '/demo' : me.home);
     if (path.startsWith("/ops") && (!me.opsRole || !me.mfa))
       go(me.opsRole ? "/security" : me.home);
   }, [me, path, go]);
