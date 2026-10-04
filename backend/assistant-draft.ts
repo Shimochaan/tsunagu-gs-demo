@@ -60,6 +60,11 @@ async function draftContext(rt: Runtime, tenant: string, oa: string, p: Row) {
     [p.customer_id],
   );
   const meetings=await all(ts,"SELECT id,held_at FROM meeting_inbox WHERE customer_id=? AND held_at IS NOT NULL",[p.customer_id]);
+  if (rt.selfDemo?.tenant === tenant && rt.selfDemo.oa === oa) {
+    meetings.push(...await all(rt.db,
+      "SELECT d.id,d.held_at FROM gs_demo_documents d JOIN gs_demo_participants p ON p.user_id=d.user_id WHERE p.tenant_id=? AND p.customer_id=?",
+      [tenant, p.customer_id]));
+  }
   const wish=preference ? parse(preference.data) : null;
   const currentNote=notes.find(n=>n.id===preference?.note_id);
   const meetingAt=(n:Row)=>meetings.find(m=>n.source_ref===m.id || n.source_ref?.startsWith(m.id+':'))?.held_at || null;

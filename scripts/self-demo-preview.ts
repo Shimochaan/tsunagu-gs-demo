@@ -115,7 +115,10 @@ const server = serve({
   },
 });
 console.log(`Local fixtures only: http://127.0.0.1:${port}/demo`);
+let closing = false;
 process.on("SIGINT", async () => {
+  if (closing) return;
+  closing = true;
   server.close();
   await f.dispose();
   process.exit(0);

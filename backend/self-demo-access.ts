@@ -20,7 +20,7 @@ export async function demoParticipant(rt: Runtime, actor: string) {
 }
 export async function isDemoCustomer(rt: Runtime, customer: string) {
   return !!(rt.selfDemo && await one(rt.db,
-    "SELECT 1 FROM gs_demo_participants WHERE tenant_id=? AND customer_id=? AND state='active' AND customer_line_id IS NOT NULL",
+    "SELECT 1 FROM gs_demo_participants WHERE tenant_id=? AND customer_id=? AND state='active' AND customer_line_id IS NOT NULL AND pair_hash IS NULL",
     [rt.selfDemo.tenant, customer]));
 }
 export async function demoCustomerAllowed(
@@ -32,7 +32,7 @@ export async function demoCustomerAllowed(
   if (!rt.selfDemo || !actor || !customer) return false;
   return !!(await one(
     rt.db,
-    "SELECT 1 FROM gs_demo_participants p JOIN memberships m ON m.user_id=p.user_id AND m.tenant_id=p.tenant_id JOIN tenants t ON t.id=p.tenant_id WHERE p.tenant_id=? AND p.user_id=? AND p.customer_id=? AND p.customer_line_id=? AND p.state='active' AND m.state='active' AND t.state='active'",
+    "SELECT 1 FROM gs_demo_participants p JOIN memberships m ON m.user_id=p.user_id AND m.tenant_id=p.tenant_id JOIN tenants t ON t.id=p.tenant_id WHERE p.tenant_id=? AND p.user_id=? AND p.customer_id=? AND p.customer_line_id=? AND p.pair_hash IS NULL AND p.state='active' AND m.state='active' AND t.state='active'",
     [rt.selfDemo.tenant, actor, customer, line],
   ));
 }

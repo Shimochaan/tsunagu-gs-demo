@@ -16,7 +16,7 @@ async function bookingOwner(rt: Runtime, token: string) {
   );
   const p = await one(
     rt.db,
-    "SELECT p.* FROM gs_demo_participants p JOIN memberships m ON m.user_id=p.user_id AND m.tenant_id=p.tenant_id JOIN tenants t ON t.id=p.tenant_id WHERE p.booking_hash=? AND p.state='active' AND m.state='active' AND t.state='active' AND p.customer_line_id IS NOT NULL",
+    "SELECT p.* FROM gs_demo_participants p JOIN memberships m ON m.user_id=p.user_id AND m.tenant_id=p.tenant_id JOIN tenants t ON t.id=p.tenant_id WHERE p.booking_hash=? AND p.state='active' AND m.state='active' AND t.state='active' AND p.customer_line_id IS NOT NULL AND p.pair_hash IS NULL",
     [await digest(token)],
   );
   requireThat(

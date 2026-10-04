@@ -25,8 +25,8 @@ import { notifyAssistant } from "./assistant-notifications.ts";
 import { extractMeetingInsights } from "./meet-analysis.ts";
 import {
   checkedMeetingTracking,
-  mergeMeetingWish,
 } from "./meeting-automation.ts";
+import { applyDemoWish } from "./self-demo-preferences.ts";
 import { readMeetingText, pollDrive } from "./drive.ts";
 import { holdCustomer } from "./sales.ts";
 
@@ -45,7 +45,7 @@ async function participant(rt: Runtime, actor: string, linked = false) {
     "「体験をはじめる」から進んでください。",
   );
   requireThat(
-    !linked || p.customer_line_id,
+    !linked || (p.customer_line_id && !p.pair_hash),
     409,
     "DEMO_LINE_REQUIRED",
     "顧客用LINEの本人確認を先に完了してください。",
@@ -252,10 +252,11 @@ export async function confirmDemoCustomer(
     "PAIR_CHANGED",
     "連携先が変わりました。再確認してください。",
   );
-  await rt.db.query(
+  const completed = await rt.db.query(
     "UPDATE gs_demo_participants SET pair_hash=NULL,pair_expires_at=NULL WHERE user_id=? AND pair_hash=?",
     [actor, p.pair_hash],
   );
+  requireThat(completed.changes, 409, "PAIR_CHANGED", "本人確認メッセージが再発行されました。最新のコードで確認してください。");
   return { ok: true, name: friend.displayName || "自分（体験用）" };
 }
 export async function processDemoDocument(
@@ -305,30 +306,13 @@ export async function processDemoDocument(
       automated: true,
     });
     const tracking = checkedMeetingTracking(result.tracking, doc.body);
-    const previous = await one(
-      ts,
-      "SELECT * FROM assistant_preferences WHERE customer_id=?",
-      [p.customer_id],
-    );
-    const wish = tracking.propertyWish
-      ? mergeMeetingWish(
-          tracking.propertyWish,
-          previous ? parse(previous.data) : null,
-        )
-      : null;
-    requireThat(
-      wish?.area && wish.maxPrice && wish.required?.length,
-      422,
-      "DEMO_WISH_INCOMPLETE",
-      "希望エリア・上限予算・間取りなどの必須条件を議事録に記入してください。",
-    );
     const current = await one(
       rt.db,
-      "SELECT version,state FROM gs_demo_documents WHERE id=?",
+      "SELECT version,state,lease_until FROM gs_demo_documents WHERE id=?",
       [docId],
     );
     requireThat(
-      current?.version === doc.version && current.state === "processing",
+      current?.version === doc.version && current.state === "processing" && current.lease_until === lease,
       409,
       "DOCUMENT_CHANGED",
       "議事録が更新されました。最新版を自動解析します。",
@@ -358,20 +342,17 @@ export async function processDemoDocument(
           at,
         ],
       },
-      {
-        sql: "INSERT INTO assistant_preferences(customer_id,note_id,data,updated_at) VALUES (?,?,?,?) ON CONFLICT(customer_id) DO UPDATE SET note_id=excluded.note_id,data=excluded.data,version=version+1,updated_at=excluded.updated_at",
-        params: [p.customer_id, noteId, json(wish), at],
-      },
     ]);
+    const applied = await applyDemoWish(rt, ts, p.customer_id, { id: doc.id, held_at: doc.held_at }, noteId, tracking.propertyWish);
     // A newly confirmed meeting note resolves the pending-result hold after cancellation.
     // A still-booked appointment and a won deal remain protected.
-    await common.query(
+    if (applied.applied) await common.query(
       "UPDATE customers SET stage='post_meeting',version=version+1 WHERE id=? AND stage='result_pending'",
       [p.customer_id],
     );
     await rt.db.query(
       "UPDATE gs_demo_documents SET state='ready',analysis=?,error=NULL,lease_until=NULL WHERE id=? AND version=? AND lease_until=?",
-      [json({ ...result, wish }), docId, doc.version, lease],
+      [json({ ...result, ...applied }), docId, doc.version, lease],
     );
     await scanAssistant(rt, tenant, oa, actor, undefined, [p.customer_id], {
       generateDraft: true,
@@ -383,7 +364,7 @@ export async function processDemoDocument(
       [
         e.code === "DEMO_AI_LIMIT" ||
         e.code?.startsWith("MEETING_") ||
-        e.code === "DEMO_WISH_INCOMPLETE"
+        e.code === "DEMO_WISH_INCOMPLETE" || e.code === "DEMO_WISH_CHANGED"
           ? e.message
           : "解析を完了できませんでした。内容を確認し「解析をやり直す」を押してください。",
         docId,
@@ -475,7 +456,8 @@ export async function demoSnapshot(rt: Runtime, actor: string) {
     tenant,
     oa,
     state: p.state,
-    customer,
+    customer: p.customer_line_id && !p.pair_hash ? customer : null,
+    customerPairPending: !!(p.customer_line_id && p.pair_hash),
     staff,
     notificationsUntil: p.notifications_until,
     documents: docs.map((d) => ({ ...d, analysis: parse(d.analysis, null) })),
@@ -520,7 +502,7 @@ export function registerSelfDemo(app: Hono<AppEnv>) {
     const { rt, actor } = ctx(c),
       p = await participant(rt, actor);
     requireThat(
-      !p.customer_line_id,
+      !p.customer_line_id || p.pair_hash,
       409,
       "ALREADY_PAIRED",
       "顧客用LINEは連携済みです。",

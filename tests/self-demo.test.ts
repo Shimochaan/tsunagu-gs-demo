@@ -11,7 +11,9 @@ import {
   demoParticipant,
   demoBookingToken,
   claimDemoAI,
+  demoCustomerAllowed,
 } from "../backend/self-demo-access.ts";
+import { applyDemoWish } from "../backend/self-demo-preferences.ts";
 import {
   demoBookingView,
   saveDemoBooking,
@@ -19,7 +21,7 @@ import {
   reconcileDemoBookings,
 } from "../backend/self-demo-booking.ts";
 import { authOptions } from "../backend/auth.ts";
-import { one, all, now, json } from "../backend/db.ts";
+import { one, all, now, json, parse } from "../backend/db.ts";
 import { digest, sign } from "../backend/security.ts";
 import {
   gsHarnessDDL,
@@ -617,6 +619,8 @@ test("self demo: meeting -> matching -> grounded draft, source ownership and ded
     );
     assert.equal(proposal.state, "pending", proposal.hold_reason);
     assert.ok(proposal.draft.includes("/demo/book/"));
+    const draftInput = JSON.parse(f.calls.find(c => c.body?.text?.format?.name === "assistant_grounded_draft")!.body.input);
+    assert.equal(draftInput.currentPropertyConditions.meetingAt, stored.held_at);
     assert.equal(extractions, 1);
     const second = await scanAssistant(
       f.rt,
@@ -635,6 +639,15 @@ test("self demo: meeting -> matching -> grounded draft, source ownership and ded
       "SELECT COUNT(*) AS n FROM gs_demo_actions WHERE user_id='guest' AND kind='ai'",
     );
     assert.equal(attempts.n, 2);
+    const latestPreference = await one(f.ts,"SELECT * FROM assistant_preferences WHERE customer_id=?",[p.customer_id]);
+    await f.common.query("UPDATE customers SET stage='result_pending' WHERE id=?",[p.customer_id]);
+    const older = await f.request("/api/demo/documents",{title:"過去の面談",body:quote,heldAt:new Date(Date.now()-3*86400000).toISOString()});
+    assert.equal((await f.request(`/api/demo/documents/${older.data.id}/link`,{version:1})).status,200);
+    const history = await one(f.rt.db,"SELECT * FROM gs_demo_documents WHERE id=?",[older.data.id]);
+    assert.equal(history.state,"ready",history.error);
+    assert.equal(parse(history.analysis).applied,false);
+    assert.deepEqual(await one(f.ts,"SELECT * FROM assistant_preferences WHERE customer_id=?",[p.customer_id]),latestPreference);
+    assert.equal((await one(f.common,"SELECT stage FROM customers WHERE id=?",[p.customer_id])).stage,"result_pending");
   } finally {
     await f.dispose();
   }
@@ -816,4 +829,99 @@ test("self demo: authenticated TimeRex ACK does not wait for LINE, and other cal
     release();await Promise.all(held);
     assert.equal(sending,true);
   } finally {release();await Promise.allSettled(held);await f.dispose();}
+});
+
+test("self demo: interrupted LINE setup stays pending and can resume after reload or expiry", async () => {
+  for (const failure of ["customer_batch", "timerex_link"]) {
+    const f = await fixture();
+    const batch = f.common.batch.bind(f.common), query = f.common.query.bind(f.common);
+    try {
+      let fail = true;
+      f.common.batch = async qs => {
+        if (failure === "customer_batch" && fail) { fail = false; throw Error("storage interruption"); }
+        return batch(qs);
+      };
+      f.common.query = async (sql, params) => {
+        if (failure === "timerex_link" && fail && sql.startsWith("INSERT OR IGNORE INTO external_links") && sql.includes("'timerex'")) {
+          fail = false; throw Error("storage interruption");
+        }
+        return query(sql, params);
+      };
+      await assert.rejects(() => f.pair(), /storage interruption/);
+      const p = (await demoParticipant(f.rt, "guest"))!;
+      assert.equal(p.customer_line_id, line, "retain the unique LINE claim while resuming");
+      assert.equal((await f.request("/api/demo")).data.customer, null, "partial customer record is not completion");
+      assert.equal((await f.request("/api/demo")).data.customerPairPending,true);
+      assert.equal(await demoCustomerAllowed(f.rt, line, "guest", p.customer_id), false);
+      const bookingToken = await demoBookingToken(f.rt,p.customer_id);
+      await assert.rejects(() => demoBookingView(f.rt, bookingToken), (e: any) => e.code === "BOOKING_LINK_INVALID");
+      assert.equal((await f.request("/api/demo/documents", {title:"test",body:"a".repeat(30),heldAt:now()})).status,409);
+      await f.rt.db.query("UPDATE gs_demo_participants SET pair_expires_at=? WHERE user_id='guest'", [new Date(Date.now()-1000).toISOString()]);
+      const regenerated = await f.request("/api/demo/customer/pair", {});
+      assert.equal(regenerated.status,200,"reissue must work despite the interrupted LINE claim");
+      const pending = (await demoParticipant(f.rt,"guest"))!;
+      f.setProof({confirm_hash:await digest("retry-code"), expires_at:pending.pair_expires_at, line_user_id:line,friend_id:"guestfriend"});
+      assert.equal((await f.request("/api/demo/customer/confirm",{code:"retry-code"})).status,200);
+      assert.equal((await f.request("/api/demo")).data.customer.name,"体験者のLINE名");
+      assert.equal((await f.request("/api/demo")).data.customerPairPending,false);
+      assert.equal(await demoCustomerAllowed(f.rt,line,"guest",p.customer_id),true);
+      assert.equal((await one(f.common,"SELECT COUNT(*) AS n FROM customers WHERE id=?",[p.customer_id])).n,1);
+      assert.equal((await one(f.common,"SELECT COUNT(*) AS n FROM external_links WHERE customer_id=?",[p.customer_id])).n,2);
+    } finally { await f.dispose(); }
+  }
+});
+
+async function preferenceNote(f: Awaited<ReturnType<typeof fixture>>, customer: string, id: string, heldAt: string) {
+  await f.rt.db.query("INSERT INTO gs_demo_documents(id,user_id,title,body,held_at,updated_at) VALUES (?,'guest',?,'fixture body',?,?)",[id,id,heldAt,now()]);
+  await f.ts.query("INSERT INTO context_notes(id,customer_id,source,source_ref,body,confirmed_by,confirmed_at,created_at) VALUES (?,?,'self_demo',?,?,'guest',?,?)",[id+'-v1',customer,id,id,now(),now()]);
+  return {id,held_at:heldAt};
+}
+const demoWish = (area: string | null, maxPrice: number | null = 50000000) => ({area,maxPrice,required:["2LDK"],excluded:[]});
+
+test("self demo: older meetings cannot replace current wishes, including reversed AI completion", async () => {
+  const f=await fixture();
+  try {
+    const p=await f.pair();
+    const older=await preferenceNote(f,p.customer_id,"older","2026-10-01T09:00:00Z");
+    const newer=await preferenceNote(f,p.customer_id,"newer","2026-10-03T09:00:00Z");
+    const query=f.ts.query.bind(f.ts);
+    let intercept=true;
+    f.ts.query=async(sql,params)=>{
+      if(intercept && sql.startsWith("INSERT INTO assistant_preferences")) {
+        intercept=false;
+        await applyDemoWish(f.rt,f.ts,p.customer_id,newer,"newer-v1",demoWish("渋谷区"));
+      }
+      return query(sql,params);
+    };
+    const result=await applyDemoWish(f.rt,f.ts,p.customer_id,older,"older-v1",demoWish("新宿区"));
+    assert.equal(result.applied,false);
+    assert.equal(parse((await one(f.ts,"SELECT data FROM assistant_preferences WHERE customer_id=?",[p.customer_id])).data).area,"渋谷区");
+    const history=await applyDemoWish(f.rt,f.ts,p.customer_id,older,"older-v1",demoWish("品川区"));
+    assert.equal(history.applied,false);
+    assert.equal((await one(f.ts,"SELECT version FROM assistant_preferences WHERE customer_id=?",[p.customer_id])).version,1);
+    await f.ts.query("UPDATE context_notes SET deleted_at=? WHERE id='newer-v1'",[now()]);
+    assert.equal((await applyDemoWish(f.rt,f.ts,p.customer_id,older,"older-v1",demoWish("新宿区"))).applied,false,"editing the latest note must not reopen an older write");
+  } finally { await f.dispose(); }
+});
+
+test("self demo: inherited wishes keep evidence and do not reuse changed or deleted note values", async () => {
+  const f=await fixture();
+  try {
+    const p=await f.pair();
+    const first=await preferenceNote(f,p.customer_id,"first","2026-10-01T09:00:00Z");
+    const second=await preferenceNote(f,p.customer_id,"second","2026-10-02T09:00:00Z");
+    const third=await preferenceNote(f,p.customer_id,"third","2026-10-03T09:00:00Z");
+    await applyDemoWish(f.rt,f.ts,p.customer_id,first,"first-v1",demoWish("渋谷区"));
+    const applied=await applyDemoWish(f.rt,f.ts,p.customer_id,second,"second-v1",demoWish(null,60000000));
+    assert.equal(applied.applied,true);
+    let pref=await one(f.ts,"SELECT data FROM assistant_preferences WHERE customer_id=?",[p.customer_id]);
+    assert.equal(parse(pref.data).area,"渋谷区");
+    assert.equal(parse(pref.data).inheritedNotes[0].id,"first-v1");
+    await f.ts.query("UPDATE context_notes SET body='希望エリアを訂正しました' WHERE id='first-v1'");
+    await assert.rejects(()=>applyDemoWish(f.rt,f.ts,p.customer_id,third,"third-v1",demoWish(null)),(e:any)=>e.code==='DEMO_WISH_INCOMPLETE');
+    await f.ts.query("UPDATE context_notes SET deleted_at=? WHERE id='second-v1'",[now()]);
+    await assert.rejects(()=>applyDemoWish(f.rt,f.ts,p.customer_id,second,"second-v2",demoWish(null)),(e:any)=>e.code==='DEMO_WISH_INCOMPLETE');
+    pref=await one(f.ts,"SELECT note_id FROM assistant_preferences WHERE customer_id=?",[p.customer_id]);
+    assert.equal(pref.note_id,"second-v1");
+  } finally { await f.dispose(); }
 });

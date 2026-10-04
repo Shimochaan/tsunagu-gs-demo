@@ -43,7 +43,7 @@ function Step({ n, title, done, children }) {
     </section>
   );
 }
-function Pair({ kind, status, run, base, reload }) {
+function Pair({ kind, status, pending, run, base, reload }) {
   const [pair, setPair] = useState(null),
     [code, setCode] = useState("");
   const staff = kind === "staff";
@@ -64,6 +64,7 @@ function Pair({ kind, status, run, base, reload }) {
         </p>
       ) : (
         <>
+          {pending && <p className="demo-muted">前回の本人確認は保存途中です。確認メッセージを再発行して続けられます。</p>}
           <div className="demo-line-add">
             <QR url={staff ? STAFF : CUSTOMER} />
             <div>
@@ -190,11 +191,12 @@ function DocumentCard({ d, run, reload }) {
       {d.analysis && (
         <>
           <p>{d.analysis.summary}</p>
-          <p className="demo-success">
-            希望条件：{d.analysis.wish?.area} /{" "}
-            {d.analysis.wish?.maxPrice?.toLocaleString()}円以内 /{" "}
-            {d.analysis.wish?.required?.join("・")}
-          </p>
+          {d.analysis.applied === false && <p className="demo-muted">{d.analysis.reason}</p>}
+          {d.analysis.wish && <p className="demo-success">
+            {d.analysis.applied === false ? "この議事録の条件" : "希望条件"}：{d.analysis.wish.area || "エリアの記載なし"} /{" "}
+            {d.analysis.wish.maxPrice ? `${d.analysis.wish.maxPrice.toLocaleString()}円以内` : "予算の記載なし"} /{" "}
+            {d.analysis.wish.required?.join("・") || "その他の条件なし"}
+          </p>}
         </>
       )}
       <details>
@@ -624,6 +626,7 @@ export function SelfDemo({ me }) {
             >
               <Pair
                 kind="customer"
+                pending={data.customerPairPending}
                 status={data.customer}
                 run={run}
                 base={base}
