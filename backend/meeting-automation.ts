@@ -109,6 +109,8 @@ const numbers = (s: string) =>
       (x.endsWith("万") ? 10000 : x.endsWith("億") ? 100000000 : 1),
   );
 export function checkedMeetingTracking(tracking: any, transcript: string) {
+  requireThat(!tracking?.reviewReason, 422, "MEETING_WISH_REVIEW",
+    `希望条件の変更を確認してください：${tracking?.reviewReason || ""}`);
   requireThat(
     tracking &&
       normalize(transcript).includes(normalize(tracking.conditionQuote)),
@@ -172,6 +174,28 @@ export function mergeMeetingWish(w: Row, previous: Row | null) {
       ...w.excluded,
     ],
   };
+}
+/** Explain each changed or inherited condition without treating absent fields as deletions. */
+export function meetingWishChanges(input: Row, previous: Row | null, wish: Row) {
+  const groups = [
+    { field: "area", label: "希望エリア", value: (w: Row) => w.area ?? null },
+    { field: "maxPrice", label: "上限予算", value: (w: Row) => w.maxPrice ?? null },
+    ...[
+      ["layout", "間取り", /^\d+s?[ldkr]+$/i],
+      ["tenure", "権利・除外条件", /借地権|所有権/],
+      ["walk", "駅徒歩", /徒歩\d+分以内/],
+    ].map(([field, label, pattern]) => ({ field: String(field), label: String(label), value: (w: Row) => [
+      ...(w.required || []).filter((t: string) => (pattern as RegExp).test(normalize(t))),
+      ...(w.excluded || []).filter((t: string) => (pattern as RegExp).test(normalize(t))).map((t: string) => `除外：${t}`),
+    ].sort() })),
+  ];
+  return groups.map(g => {
+    const before = g.value(previous || {}), after = g.value(wish), extracted = g.value(input);
+    const empty = (v: unknown) => v === null || (Array.isArray(v) && !v.length);
+    return { field: g.field, label: g.label, before, after,
+      mode: empty(extracted) ? "inherited" : empty(before) ? "new" : json(before) === json(after) ? "confirmed" : "updated",
+      quote: empty(extracted) ? "" : input.quote || "" };
+  }).filter(c => c.after !== null && (!Array.isArray(c.after) || c.after.length));
 }
 export function groundedMeetingTimings(
   tracking: any,
@@ -528,6 +552,7 @@ export async function processMeetingUpdates(
               "MEETING_WISH",
               "エリアまたは予算の根拠が不足しています。希望条件を確認してください。",
             );
+            const changes = meetingWishChanges(tracking.propertyWish, validPrior ? prior : null, wish);
             await db.query(
               `INSERT INTO assistant_preferences(customer_id,note_id,data,updated_at) VALUES (?,?,?,?) ON CONFLICT(customer_id) DO UPDATE SET note_id=excluded.note_id,data=excluded.data,version=version+1,updated_at=excluded.updated_at`,
               [
@@ -535,7 +560,8 @@ export async function processMeetingUpdates(
                 noteId,
                 json({
                   ...wish,
-                  inheritedNotes: validPrior ? inheritedNotes : [],
+                  inheritedNotes: validPrior && changes.some(c => c.mode === "inherited") ? inheritedNotes : [],
+                  changes,
                 }),
                 at,
               ],

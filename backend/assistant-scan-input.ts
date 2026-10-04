@@ -34,7 +34,7 @@ export async function scanInputs(
     ),
     ts.batch([
       {
-        sql: "SELECT p.*,a.expires_at,a.snoozed_until FROM proposals p JOIN assistant_proposals a ON a.proposal_id=p.id WHERE p.customer_id IN (SELECT value FROM json_each(?)) AND p.state IN ('pending','approved','held')",
+        sql: "SELECT p.*,a.expires_at,a.snoozed_until,a.evidence FROM proposals p JOIN assistant_proposals a ON a.proposal_id=p.id WHERE p.customer_id IN (SELECT value FROM json_each(?)) AND p.state IN ('pending','approved','held')",
         params: [ids],
       },
       {

@@ -197,6 +197,16 @@ function DocumentCard({ d, run, reload }) {
             {d.analysis.wish.maxPrice ? `${d.analysis.wish.maxPrice.toLocaleString()}円以内` : "予算の記載なし"} /{" "}
             {d.analysis.wish.required?.join("・") || "その他の条件なし"}
           </p>}
+          {d.analysis.changes?.length > 0 && <details>
+            <summary>更新した条件・引き継いだ条件を確認する</summary>
+            {d.analysis.changes.map(c => {
+              const value = v => v === null ? "未登録" : Array.isArray(v) ? v.join("・") || "未登録" : typeof v === "number" ? `${v.toLocaleString()}円` : v;
+              return <div key={c.field}>
+                <p><strong>{c.label}</strong> · {({new:"新規",updated:"変更",inherited:"以前の条件を継続",confirmed:"再確認"})[c.mode]}<br />{value(c.before)} → {value(c.after)}</p>
+                {c.quote && <small>根拠：{c.quote}</small>}
+              </div>;
+            })}
+          </details>}
         </>
       )}
       <details>
@@ -294,7 +304,8 @@ function Proposal({ p, run, reload }) {
     [category, setCategory] = useState("auto"),
     [note, setNote] = useState(""),
     [reason, setReason] = useState("unspecified");
-  const active = p.state === "pending" || p.state === "approved";
+  const active = ["pending", "approved", "held"].includes(p.state);
+  const needsGeneration = ["blocked", "failed", "limit", "template"].includes(p.evidence.draftMode);
   const action = (action, extra = {}) =>
     run(
       async () => {
@@ -341,14 +352,20 @@ function Proposal({ p, run, reload }) {
         </small>
       </div>
       <p>{p.reason}</p>
+      {active && needsGeneration && <p className="demo-error" role="status">AI文案はまだ完成していません。下の文章は参考テンプレートです。再生成または編集で確認を進められます。</p>}
       <pre>{p.draft}</pre>
       <small>{p.evidence.draftDetail}</small>
       {p.hold_reason && <p className="demo-error">{p.hold_reason}</p>}
+      {active && needsGeneration && <button className="demo-button" onClick={() => run(async () => {
+        const result = await api(`/api/demo/proposals/${p.id}/generate`, { version: p.version });
+        await reload();
+        if (result.state !== "generated") throw Error(result.detail);
+      }, "最新の条件と出典から文案を作り直しています。AI利用枠を1回使用します。")}>最新の根拠で文案を再生成する（1回分）</button>}
       {active &&
         (!edit ? (
           <>
             <div className="demo-actions">
-              <button className="demo-button" onClick={() => action("approve")}>
+              <button className="demo-button" disabled={p.state === "held" || needsGeneration} onClick={() => action("approve")}>
                 この文面を自分のLINEへ送る
               </button>
               <button
@@ -900,6 +917,7 @@ export function SelfDemo({ me }) {
                             "sent",
                             "sending",
                             "uncertain",
+                            "held",
                           ].includes(p.state),
                       )
                       .map((p) => (
@@ -921,7 +939,7 @@ export function SelfDemo({ me }) {
                   >
                     {openAll
                       ? "現在の提案だけ表示"
-                      : "過去・見送り・再確認の提案も表示"}
+                      : "過去・見送りの提案も表示"}
                   </button>
                   {data.feedback.length > 0 && (
                     <details>

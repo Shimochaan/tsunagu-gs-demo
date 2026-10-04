@@ -13,6 +13,8 @@ import {
   rememberMeetingBinding,
   groundedMeetingTimings,
   checkedMeetingTracking,
+  mergeMeetingWish,
+  meetingWishChanges,
   queueConfirmedMeeting,
 } from "../backend/meeting-automation.ts";
 import {
@@ -780,4 +782,17 @@ test("P02 meeting grounds walking conditions across two separately verified exce
   // A requested tag elsewhere in the transcript is insufficient unless an exact
   // supporting excerpt was selected; this does not search the whole transcript.
   assert.throws(()=>checkedMeetingTracking({...tracking,conditionQuote:"途中の会話",terms:[]},transcript),(e:any)=>e.code==='MEETING_WISH');
+});
+
+
+test("meeting changes: explicit replacements, preserved omissions and ambiguous updates", () => {
+  const previous={area:"新宿区",maxPrice:65000000,required:["3LDK","所有権","駅徒歩15分以内"],excluded:["定期借地権"]};
+  const input={area:"渋谷区",maxPrice:null,required:["2LDK"],excluded:[],quote:"渋谷区の2LDKへ変更。"};
+  const merged=mergeMeetingWish(input,previous);
+  assert.deepEqual(merged,{area:"渋谷区",maxPrice:65000000,required:["所有権","駅徒歩15分以内","2LDK"],excluded:["定期借地権"]});
+  const changes=meetingWishChanges(input,previous,merged);
+  assert.equal(changes.find(c=>c.field==="area")!.mode,"updated");
+  assert.equal(changes.find(c=>c.field==="layout")!.before[0],"3LDK");
+  assert.equal(changes.find(c=>c.field==="maxPrice")!.mode,"inherited");
+  assert.throws(()=>checkedMeetingTracking({conditionQuote:input.quote,reviewReason:"渋谷区への変更は検討中です。",terms:[],timings:[],propertyWish:input},input.quote), (e:any)=>e.code==="MEETING_WISH_REVIEW");
 });

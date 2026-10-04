@@ -44,6 +44,7 @@ export const meetingExtractSchema = z
 export const meetingTrackingSchema = z
   .object({
     conditionQuote: z.string().max(1000),
+    reviewReason: z.string().max(500).default(""),
     terms: z.array(z.string().min(2).max(60)).max(10),
     timings: z
       .array(
@@ -152,7 +153,7 @@ export async function extractMeetingInsights(
         body: json({
           model: rt.ai.model,
           store: false,
-          instructions: `${instructions}\n${(await businessProfile(rt, tenantId)).prompt}\n${params.automated ? "tracking.conditionQuoteは現在の希望条件・次の行動を示す原文を文字通り抜粋する。確認できなければ空文字、termsは空配列。termsはその抜粋に存在する語だけ。propertyWishは原文で確認できる現在の不動産条件を設定し、記載のないareaとmaxPriceはnull、記載のないrequiredとexcludedは空配列にする。一部条件だけの変更も抽出する。quoteに根拠の原文を文字通り抜粋する。maxPriceは必ず円単位に換算（5,500万円なら55000000）。areaは最優先エリア名のみを記載。requiredは間取り・権利・許容最大の徒歩N分以内、excludedは除外する権利のタグを記載する。条件付きの別エリアや距離条件はsummaryに保ち、最優先エリアと混ぜない。過去の撤回された金額や優先希望を必須条件にしない。確認できなければnull。原文の複数箇所を接合せず連続する抜粋を使う。tracking.timingsは顧客と明示的に約束した再連絡だけ。quoteに日数または年月日を含む原文を抜粋し、daysAfterは会議実施日からの日数。推奨日や推測は空配列。" : ""}`,
+          instructions: `${instructions}\n${(await businessProfile(rt, tenantId)).prompt}\n${params.automated ? "tracking.conditionQuoteは現在の希望条件・次の行動を示す原文を文字通り抜粋する。確認できなければ空文字、termsは空配列。termsはその抜粋に存在する語だけ。propertyWishは原文で確認できる現在の不動産条件を設定し、記載のないareaとmaxPriceはnull、記載のないrequiredとexcludedは空配列にする。一部条件だけの変更も抽出する。「検討するかも」「変更したいが未定」など変更の確定が曖昧な場合、同じ項目に確定できない相反条件がある場合、条件の撤回・上限なしを既存形式で表現できない場合は、tracking.reviewReasonへ確認事項を具体的に記し自動更新しない。明確な現在条件ならreviewReasonは空文字。quoteに根拠の原文を文字通り抜粋する。maxPriceは必ず円単位に換算（5,500万円なら55000000）。areaは最優先エリア名のみを記載。requiredは間取り・権利・許容最大の徒歩N分以内、excludedは除外する権利のタグを記載する。条件付きの別エリアや距離条件はsummaryに保ち、最優先エリアと混ぜない。過去の撤回された金額や優先希望を必須条件にしない。確認できなければnull。原文の複数箇所を接合せず連続する抜粋を使う。tracking.timingsは顧客と明示的に約束した再連絡だけ。quoteに日数または年月日を含む原文を抜粋し、daysAfterは会議実施日からの日数。推奨日や推測は空配列。" : ""}`,
           input: json({
             customerName: params.customerName,
             title: params.title,

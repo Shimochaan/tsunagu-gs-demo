@@ -13,7 +13,7 @@ import {
   claimDemoAI,
   demoCustomerAllowed,
 } from "../backend/self-demo-access.ts";
-import { applyDemoWish } from "../backend/self-demo-preferences.ts";
+import { applyDemoWish, pendingDemoMeetings } from "../backend/self-demo-preferences.ts";
 import {
   demoBookingView,
   saveDemoBooking,
@@ -577,6 +577,13 @@ test("self demo: meeting -> matching -> grounded draft, source ownership and ded
       ...source,
       audienceCustomerId: "another-customer",
     });
+    // Reproduce an existing owner's older follow-up profile alongside a newer demo wish.
+    await f.ts.query("INSERT INTO context_notes(id,customer_id,source,body,confirmed_by,confirmed_at,created_at) VALUES ('old-profile',?,'human','文京区、5200万円以内、3LDK','guest',?,?)", [p.customer_id,now(),now()]);
+    const oldSource=await one(f.ts,"SELECT id,customer_id,body,confirmed_by,confirmed_at,source,source_ref FROM context_notes WHERE id='old-profile'");
+    await f.ts.query("INSERT INTO followup_profiles(customer_id,owner_user_id,line_user_id,data,evidence,confirmed_by,updated_at) VALUES (?,'guest',?,?,?,'guest',?)", [p.customer_id,line,
+      json({industry:"estate",enabled:true,conditionQuote:"文京区、5200万円以内、3LDK",terms:["文京区","3LDK"],stalledQuote:"",promiseQuote:"",promiseAt:null,phase:"considering",waitDays:3}),
+      json({kind:"note",id:oldSource.id,body:oldSource.body,hash:await digest(json(oldSource))}),now()]);
+
     const doc = await f.request("/api/demo/documents", {
       title: "テスト面談",
       body: quote,
@@ -621,6 +628,12 @@ test("self demo: meeting -> matching -> grounded draft, source ownership and ded
     assert.ok(proposal.draft.includes("/demo/book/"));
     const draftInput = JSON.parse(f.calls.find(c => c.body?.text?.format?.name === "assistant_grounded_draft")!.body.input);
     assert.equal(draftInput.currentPropertyConditions.meetingAt, stored.held_at);
+    assert.ok(proposal.reason.includes("渋谷区"));
+    assert.ok(!proposal.reason.includes("文京区"));
+    assert.ok(draftInput.requiredRefs.includes(`note:${stored.id}-v1`));
+    assert.ok(!draftInput.requiredRefs.includes("followup-profile"), "old profile must not be mandatory evidence for the current wish");
+    assert.equal(JSON.parse(draftInput.refs.find((r:any)=>r.id==="followup-profile").text).propertyConditionsSuperseded,true);
+
     assert.equal(extractions, 1);
     const second = await scanAssistant(
       f.rt,
@@ -1005,5 +1018,87 @@ test("self demo: failed extraction is retained for free revalidation and invalid
     assert.equal(extractions,3,'changed text requires fresh extraction');
     assert.equal(doc.version,2);
     assert.equal(doc.state,'ready',doc.error);
+  } finally {await f.dispose();}
+});
+
+
+test("self demo: a blocked AI draft can recover, does not block a new property, and retries enforce owner/version", async () => {
+  const f=await fixture();
+  try {
+    const p=await f.pair();
+    f.rt.ai={apiKey:"fixture",model:"fixture"};
+    const doc=await preferenceNote(f,p.customer_id,"current",now());
+    await applyDemoWish(f.rt,f.ts,p.customer_id,doc,"current-v1",{...demoWish("渋谷区",55000000),required:["2LDK","所有権","駅徒歩10分以内"],excluded:["定期借地権"]});
+    const fetch=f.rt.externalFetch;
+    let omitQuote=true;
+    f.rt.externalFetch=async(u,init)=>{
+      const response=await fetch(u,init);
+      if(String(u).includes("api.openai.com")) {
+        const result=await response.json() as any;
+        const output=JSON.parse(result.output[0].content[0].text);
+        if(omitQuote) output.facts=output.facts.filter((x:any)=>x.ref.startsWith("source:"));
+        result.output[0].content[0].text=json(output);
+        return Response.json(result);
+      }
+      return response;
+    };
+    const body={title:"渋谷テスト物件",area:"渋谷区",price:49000000,layout:"2LDK",walkingMinutes:5};
+    assert.equal((await f.request("/api/demo/properties",body)).status,200);
+    let q=await one(f.ts,"SELECT * FROM proposals WHERE customer_id=?",[p.customer_id]);
+    assert.equal(q.state,"held");
+    assert.match(q.hold_reason,/現在の顧客条件/);
+    const snapshot=(await f.request("/api/demo")).data;
+    assert.equal(snapshot.proposals[0].state,"held");
+    await startDemo(f.rt,{id:"other-guest",name:"Other"});
+    await f.rt.db.query("UPDATE gs_demo_participants SET customer_line_id='other-line' WHERE user_id='other-guest'");
+    assert.equal((await f.request(`/api/demo/proposals/${q.id}/generate`,{version:q.version},"other-guest")).status,404);
+    assert.equal((await f.request(`/api/demo/proposals/${q.id}/generate`,{version:1})).status,409);
+    omitQuote=false;
+    const recovered=await f.request(`/api/demo/proposals/${q.id}/generate`,{version:q.version});
+    assert.equal(recovered.data.state,"generated",json(recovered.data));
+    assert.equal((await f.request(`/api/demo/proposals/${q.id}/generate`,{version:q.version})).status,409);
+    q=await one(f.ts,"SELECT * FROM proposals WHERE id=?",[q.id]);
+    assert.equal(q.state,"pending");
+    assert.ok(q.draft.includes("/demo/book/"));
+    assert.equal((await one(f.h,"SELECT COUNT(*) n FROM outbox")).n,0,"generation must not send a customer message");
+    // The original stall affected customers with a follow-up profile.
+    const note=await one(f.ts,"SELECT id,customer_id,body,confirmed_by,confirmed_at,source,source_ref FROM context_notes WHERE id='current-v1'");
+    await f.ts.query("INSERT INTO followup_profiles(customer_id,owner_user_id,line_user_id,data,evidence,confirmed_by,updated_at) VALUES (?,'guest',?,?,?,'guest',?)",[p.customer_id,line,
+      json({industry:"estate",enabled:true,conditionQuote:note.body,terms:[],stalledQuote:"",promiseQuote:"",promiseAt:null,phase:"considering",waitDays:3}),json({kind:"note",id:note.id,body:note.body,hash:await digest(json(note))}),now()]);
+    await f.ts.query("UPDATE proposals SET state='held' WHERE id=?",[q.id]);
+    await f.ts.query("UPDATE assistant_proposals SET evidence=json_set(evidence,'$.draftMode','blocked','$.followupVersion',1) WHERE proposal_id=?",[q.id]);
+    assert.equal((await f.request("/api/demo/properties",{...body,title:"渋谷テスト物件2"})).status,200);
+    assert.equal((await one(f.ts,"SELECT COUNT(*) n FROM proposals WHERE customer_id=?",[p.customer_id])).n,2,"new source is not blocked by an AI rejection");
+    assert.equal((await one(f.ts,"SELECT state FROM proposals WHERE customer_id=? AND id<>?",[p.customer_id,q.id])).state,"pending");
+    assert.equal((await scanAssistant(f.rt,"t","oa","guest",undefined,[p.customer_id],{generateDraft:true})).created,0,"polling must not regenerate or notify the same update");
+
+  } finally {await f.dispose();}
+});
+
+
+test("self demo: ambiguous current changes preserve values and block discovery/approval until resolved", async () => {
+  const f=await fixture();
+  try {
+    const p=await f.pair();
+    const first=await preferenceNote(f,p.customer_id,"prior","2026-10-01T09:00:00Z");
+    await applyDemoWish(f.rt,f.ts,p.customer_id,first,"prior-v1",demoWish("新宿区"));
+    const before=await one(f.ts,"SELECT * FROM assistant_preferences WHERE customer_id=?",[p.customer_id]);
+    await f.request("/api/demo/properties",{title:"新宿のテスト物件",area:"新宿区",price:48000000,layout:"2LDK",walkingMinutes:5});
+    const proposal=await one(f.ts,"SELECT * FROM proposals WHERE customer_id=?",[p.customer_id]);
+    assert.equal(proposal.state,"pending");
+
+    const ambiguous=await preferenceNote(f,p.customer_id,"ambiguous","2026-10-02T09:00:00Z");
+    await f.rt.db.query("UPDATE gs_demo_documents SET state='error',analysis=? WHERE id=?",[json({extraction:{tracking:{reviewReason:"渋谷への変更は未定です"}}}),ambiguous.id]);
+    assert.ok((await pendingDemoMeetings(f.rt,"t","oa",[p.customer_id])).has(p.customer_id));
+    const approval=await f.request(`/api/demo/proposals/${proposal.id}/action`,{version:proposal.version,action:"approve"});
+    assert.equal(approval.status,409);
+    assert.match(approval.data.message,/新しい議事録の条件/);
+    assert.equal((await one(f.h,"SELECT COUNT(*) n FROM outbox")).n,0);
+
+    assert.equal((await scanAssistant(f.rt,"t","oa","guest",undefined,[p.customer_id])).created,0);
+    assert.deepEqual(await one(f.ts,"SELECT * FROM assistant_preferences WHERE customer_id=?",[p.customer_id]),before);
+    const resolved=await preferenceNote(f,p.customer_id,"resolved","2026-10-03T09:00:00Z");
+    await applyDemoWish(f.rt,f.ts,p.customer_id,resolved,"resolved-v1",demoWish("渋谷区"));
+    assert.equal((await pendingDemoMeetings(f.rt,"t","oa",[p.customer_id])).size,0,"older unresolved history does not override a newer confirmed meeting");
   } finally {await f.dispose();}
 });

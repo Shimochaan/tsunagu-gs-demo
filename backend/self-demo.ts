@@ -22,6 +22,7 @@ import {
 } from "./assistant.ts";
 import { learningInput, decisionInput } from "./assistant-learning.ts";
 import { notifyAssistant } from "./assistant-notifications.ts";
+import { generateAssistantDraft } from "./assistant-draft.ts";
 import { extractMeetingInsights } from "./meet-analysis.ts";
 import {
   checkedMeetingTracking,
@@ -327,12 +328,6 @@ export async function processDemoDocument(
     );
     const noteId = `${doc.id}-v${doc.version}`,
       at = now();
-    await holdCustomer(
-      rt,
-      tenant,
-      p.customer_id,
-      "議事録の条件が更新されました。最新の条件から提案を確認します。",
-    );
     await ts.batch([
       {
         sql: "UPDATE context_notes SET deleted_at=? WHERE customer_id=? AND source='self_demo' AND source_ref=? AND id<>?",
@@ -352,6 +347,8 @@ export async function processDemoDocument(
       },
     ]);
     const applied = await applyDemoWish(rt, ts, p.customer_id, { id: doc.id, held_at: doc.held_at }, noteId, tracking.propertyWish);
+    if (applied.applied) await holdCustomer(rt, tenant, p.customer_id,
+      "議事録の条件が更新されました。最新の条件から提案を確認します。");
     // A newly confirmed meeting note resolves the pending-result hold after cancellation.
     // A still-booked appointment and a won deal remain protected.
     if (applied.applied) await common.query(
@@ -748,6 +745,16 @@ export function registerSelfDemo(app: Hono<AppEnv>) {
     });
     await notifyAssistant(rt, tenant, oa, actor);
     return c.json({ ok: true, id: sid });
+  });
+  app.post("/api/demo/proposals/:id/generate", async (c) => {
+    const { rt, actor } = ctx(c), p = await participant(rt, actor, true), { tenant, oa } = config(rt);
+    const b = z.object({ version: z.number().int().positive() }).strict().parse(await c.req.json());
+    const ts = await rt.openDatabase(tenant, oa, "tsunagu");
+    requireThat(await one(ts, "SELECT id FROM proposals WHERE id=? AND customer_id=?", [c.req.param("id"), p.customer_id]),
+      404, "NOT_FOUND", "自分宛の提案が見つかりません。");
+    const result = await generateAssistantDraft(rt, tenant, oa, actor, c.req.param("id"), b.version);
+    await notifyAssistant(rt, tenant, oa, actor);
+    return c.json(result);
   });
   app.post("/api/demo/proposals/:id/action", async (c) => {
     const { rt, actor } = ctx(c),

@@ -1,4 +1,5 @@
 import { demoBookingUrl, isDemoCustomer } from "./self-demo-access.ts";
+import { pendingDemoMeetings } from "./self-demo-preferences.ts";
 import { normalizeTag, sourceContradiction, matchesWish, sourceContentHash } from "./assistant-match.ts";
 import { feedbackQuery, learningInput, decisionInput, type LearningInput } from "./assistant-learning.ts";
 import { publishProposalEvent, registerProposalEvents } from "./proposal-events.ts";
@@ -228,6 +229,8 @@ async function evidenceProblem(
 ) {
   const ts = await rt.openDatabase(tenant, oa, "tsunagu"),
     ev = parse(meta.evidence);
+  if ((await pendingDemoMeetings(rt, tenant, oa, [p.customer_id])).size)
+    return "新しい議事録の条件を確認中です。変更内容が確定してから提案を再確認してください。";
   if(await one(ts,"SELECT d.id FROM meeting_inbox d JOIN meeting_auto_state s ON s.file_id=d.id WHERE d.customer_id=? AND d.state NOT IN ('ignored','missing') AND s.state IN ('processing','retry','needs_review') LIMIT 1",[p.customer_id])) return "新しい議事録の反映が未完了です。原文・希望条件を確認してから提案を再作成してください。";
   const business = await businessProfile(rt, tenant);
   if ((ev.businessVersion || 0) !== business.version) return "会社の主事業・研究テーマが変更されています。最新設定から提案を確認してください。";
@@ -503,10 +506,7 @@ export async function scanAssistant(
   const followups = await followupInputs(h, ts, [...profiles.values()]);
   const pendingMeetings=new Set((await all(ts,"SELECT DISTINCT d.customer_id FROM meeting_inbox d JOIN meeting_auto_state s ON s.file_id=d.id WHERE d.customer_id IN (SELECT value FROM json_each(?)) AND d.state NOT IN ('ignored','missing') AND s.state IN ('processing','retry','needs_review')",[json(customers.map(c=>c.id))])).map(d=>d.customer_id));
 
-  if(rt.selfDemo) {
-    const pendingDemo=await all(rt.db,"SELECT DISTINCT p.customer_id FROM gs_demo_documents d JOIN gs_demo_participants p ON p.user_id=d.user_id WHERE d.state IN ('queued','processing') AND p.tenant_id=?",[tenant]);
-    for(const d of pendingDemo) pendingMeetings.add(d.customer_id);
-  }
+  for (const cid of await pendingDemoMeetings(rt, tenant, oa, customers.map(c => c.id))) pendingMeetings.add(cid);
   for (const customer of ordered) {
     if (control.shouldYield?.()) break;
     processed.push(customer.id);
@@ -592,7 +592,7 @@ export async function scanAssistant(
       ? input.previous.get(customer.id) || []
       : await all(
           ts,
-          "SELECT p.*,a.expires_at,a.snoozed_until FROM proposals p JOIN assistant_proposals a ON a.proposal_id=p.id WHERE p.customer_id=? AND p.state IN ('pending','approved','held')",
+          "SELECT p.*,a.expires_at,a.snoozed_until,a.evidence FROM proposals p JOIN assistant_proposals a ON a.proposal_id=p.id WHERE p.customer_id=? AND p.state IN ('pending','approved','held')",
           [customer.id],
         );
     const reviewKey = `review:${customer.id}`;
@@ -644,7 +644,9 @@ export async function scanAssistant(
           [p.id],
         );
       }
-      if (!reason && ["pending", "approved", "held"].includes(p.state))
+      // A rejected AI draft stays reviewable, but must not block a different new source forever.
+      const aiBlocked = p.state === "held" && parse(p.evidence).draftMode === "blocked";
+      if (!reason && !aiBlocked && ["pending", "approved", "held"].includes(p.state))
         activeProposal = true;
       reviewedThrough = p.id;
     }
@@ -815,14 +817,16 @@ export async function scanAssistant(
         const topic = d.tags
           .filter((tag: string) =>
             norm(
-              s.kind === "news" ? note!.body : profile ? profileCondition(parse(profile.data)) : note!.body,
+              s.kind === "news" ? note!.body : wish && note ? note.body : profile ? profileCondition(parse(profile.data)) : note!.body,
             ).includes(norm(tag)),
           )
           .join("・");
         reason =
           kind === "news"
             ? `確認した発言・メモの「${topic}」に関連する記事が公開されました。個別の条件への適用は未確認です。`
-            : profile
+            : wish && note
+              ? `ご希望の${wish.area}・予算${wish.maxPrice.toLocaleString("ja-JP")}円以内・${wish.required.join("、")}に一致する新着です。在庫確認 ${s.checked_at}。`
+              : profile
               ? `確認済みの条件「${profileCondition(parse(profile.data))}」と新着情報のタグが一致しました。詳しい適用条件は担当者が確認してください。`
               : `ご希望の${wish.area}・予算${wish.maxPrice.toLocaleString("ja-JP")}円以内・${wish.required.join("、")}に一致する新着です。在庫確認 ${s.checked_at}。`;
         draft =
@@ -861,7 +865,7 @@ export async function scanAssistant(
               }
             : {}),
           ...(kind === "product" && pref
-            ? { preferenceVersion: pref!.version, preferences: wish }
+            ? { preferenceVersion: pref!.version, preferences: wish, condition: `${wish.area}・${wish.maxPrice}円以内・${wish.required.join("、")}` }
             : {}),
         };
         expiry = new Date(
