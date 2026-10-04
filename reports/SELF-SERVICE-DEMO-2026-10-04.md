@@ -36,7 +36,7 @@
 
 - URL・QR付きHTML/PDFを公開。PDF2ページ・日本語表示・4つのリンクを確認。公開用に切り出したツリーでも型チェック・89件のテスト・ビルド成功。
 
-- 公開GitHub：[Shimochaan/tsunagu-gs-demo](https://github.com/Shimochaan/tsunagu-gs-demo)。認証なしのAPIでpublic=true、READMEを200で取得できることを確認。ソースとPDF・HTML・提出文をアップロード済み。Node 22/26の[GitHub Actions](https://github.com/Shimochaan/tsunagu-gs-demo/actions/runs/37207972620)で型・86件のテスト・ビルドが成功。
+- 公開GitHub：[Shimochaan/tsunagu-gs-demo](https://github.com/Shimochaan/tsunagu-gs-demo)。認証なしのAPIでpublic=true、READMEを200で取得できることを確認。ソースとPDF・HTML・提出文をアップロード済み。Node 22/26の[GitHub Actions](https://github.com/Shimochaan/tsunagu-gs-demo/actions/runs/37208973305)で型・89件のテスト・ビルドが成功。
 
 ## 完了前に残る実機確認
 
